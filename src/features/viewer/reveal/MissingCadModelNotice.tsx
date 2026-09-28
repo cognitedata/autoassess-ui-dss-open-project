@@ -16,7 +16,7 @@ export function MissingCadModelNotice({ waitingCampaignIds, processingCampaignId
       className={cn('rounded-lg bg-black/60 px-4 py-3 text-left text-sm text-white backdrop-blur-sm', className)}
       data-testid="missing-cad-model-notice"
     >
-      <p className="font-medium">3D model not built yet</p>
+      <p className="font-medium">3D model not ready yet</p>
       <ul className="mt-1 space-y-1 text-white/80">
         {campaignIds.map((id) =>
           processing.has(id) && !waitingCampaignIds.includes(id) ? (
@@ -25,9 +25,11 @@ export function MissingCadModelNotice({ waitingCampaignIds, processingCampaignId
             <li key={id}>{id} — being processed in CDF; more meshes are waiting for `dss worker`.</li>
           ) : (
             <li key={id}>
-              {id}: 3D model being built by <code className="font-mono">dss worker</code>; it appears here
-              automatically. No worker running? Run{' '}
-              <code className="font-mono">{`dss campaign build-3d-model --campaign ${id}`}</code>
+              {id} — waiting for a <code className="font-mono">dss worker</code>. While one is running the
+              model builds and appears here automatically. If nothing happens, no worker is running or the
+              mesh is failing to convert — run{' '}
+              <code className="font-mono">{`dss campaign build-3d-model --campaign ${id}`}</code> to build it
+              now and see any error.
             </li>
           ),
         )}

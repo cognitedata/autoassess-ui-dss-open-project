@@ -7,8 +7,9 @@ describe(MissingCadModelNotice.name, () => {
   it('says dss worker is building the model of meshes without one', () => {
     render(<MissingCadModelNotice waitingCampaignIds={['result-1']} processingCampaignIds={[]} />);
 
-    expect(screen.getByText('3D model not built yet')).toBeInTheDocument();
-    expect(screen.getByText(/being built by/)).toHaveTextContent('result-1: 3D model being built by dss worker');
+    expect(screen.getByText('3D model not ready yet')).toBeInTheDocument();
+    expect(screen.getByText(/waiting for a/)).toHaveTextContent('result-1 — waiting for a dss worker');
+    expect(screen.getByText(/waiting for a/)).toHaveTextContent('dss campaign build-3d-model --campaign result-1');
     expect(screen.getByText('dss campaign build-3d-model --campaign result-1')).toBeInTheDocument();
   });
 
