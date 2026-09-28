@@ -276,6 +276,31 @@ class TestCampaignBuild3dModel:
         assert "not found" in result.output
 
 
+class TestWorker:
+    def test_once_builds_the_meshes_of_the_area_without_a_model(self) -> None:
+        artifacts = _StubMeshFiles([_mesh(11, "f1")])
+        threed_svc = _stub_threed()
+        campaign_svc = MagicMock()
+        campaign_svc.list.return_value = []
+
+        result = _run_worker(campaign_svc, artifacts, threed_svc, "--once", "--area", "a-1")
+
+        assert result.exit_code == 0, result.output
+        [call] = threed_svc.create_cad_model_for_file.call_args_list
+        assert call.kwargs["source"] == _mesh(11, "f1")
+        assert "built 1" in _plain(result.output)
+
+    def test_once_reports_nothing_to_do(self) -> None:
+        artifacts = _StubMeshFiles([_mesh(11, "f1")])
+        threed_svc = _stub_threed(per_file={"f1": _cad("f1")})
+
+        result = _run_worker(MagicMock(), artifacts, threed_svc, "--once")
+
+        assert result.exit_code == 0, result.output
+        threed_svc.create_cad_model_for_file.assert_not_called()
+        assert "built 0" in _plain(result.output)
+
+
 _FINDINGS_CSV = (
     "id,x,y,z,class,confidence\n"
     "c1,9.9,5,5,corrosion,0.9\n"
@@ -633,9 +658,19 @@ def _stub_threed(
     threed_svc.find_campaign_models.side_effect = lambda ids: {
         c: m for c, m in (legacy or {}).items() if c in ids
     }
+    threed_svc.find_model_for_file.side_effect = lambda xid: (per_file or {}).get(xid)
     threed_svc.create_cad_model_for_file.side_effect = lambda **kw: _cad(kw["source"].external_id)
     threed_svc.wait_until_processed.return_value = "Done"
     return threed_svc
+
+
+def _run_worker(
+    campaign_svc: MagicMock, artifacts: _StubMeshFiles, threed_svc: MagicMock, *args: str
+) -> Result:
+    services = (MagicMock(), MagicMock(), MagicMock(), campaign_svc, artifacts)
+    services = (*services, *(MagicMock() for _ in range(3)), threed_svc)
+    with patch("uidss.cli.main._get_client", return_value=services):
+        return runner.invoke(app, ["worker", *args])
 
 
 def _build_3d(

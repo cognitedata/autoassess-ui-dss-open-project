@@ -66,6 +66,7 @@ from uidss.services.threed_service import (
 from uidss.services.vessel_service import CdfVesselService, VesselServiceProtocol
 from uidss.threed.pipeline import build_file_cad_model
 from uidss.threed.ply import PlyMesh, merge_meshes, read_ply
+from uidss.worker import ModelWorker, TickReport
 
 log = structlog.get_logger()
 console = Console()
@@ -558,6 +559,54 @@ def _print_findings_plan(
 
 def _fmt_vec(v: tuple[float, float, float]) -> str:
     return f"{v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f}"
+
+
+@app.command("worker")
+@_friendly_errors
+def worker(
+    area: str | None = typer.Option(
+        None, "--area", help="Only build meshes of this area (external id); default: all areas"
+    ),
+    poll: float = typer.Option(30, "--poll", min=1, help="Seconds between checks"),
+    once: bool = typer.Option(False, "--once", help="Check once, build what's missing, exit"),
+) -> None:
+    """Build the 3D model of every uploaded mesh that doesn't have one, as meshes arrive.
+
+    Meant to run at boot on the ground station (see the tutorial for a systemd/launchd unit).
+    Robots with autoassess_bridge, `dss campaign upload` and scripts only upload the mesh; the
+    worker converts it and creates its CDF 3D model, one at a time.
+    """
+    _v, _a, _p, campaigns_svc, artifacts_svc, *_rest, threed_svc = _get_client()
+    model_worker = ModelWorker(
+        meshes=artifacts_svc,
+        campaigns=campaigns_svc,
+        threed=threed_svc,
+        build=functools.partial(build_file_cad_model, workers=os.cpu_count() or 1),
+        area=area,
+    )
+    scope = f"area {area}" if area else "all areas"
+    console.print(
+        f"dss worker: building missing 3D models for {scope}"
+        + ("" if once else f", every {poll:g} s")
+    )
+    model_worker.run(poll_s=poll, once=once, on_tick=_print_tick)
+
+
+def _print_tick(report: TickReport) -> None:
+    parts = [
+        f"built {len(report.built)}",
+        f"failed {len(report.failed)}",
+        f"with a model {report.with_model}",
+    ]
+    if report.covered_by_legacy:
+        parts.append(f"shown by legacy campaign models {len(report.covered_by_legacy)}")
+    if report.backing_off:
+        parts.append(f"waiting to retry {len(report.backing_off)}")
+    console.print("  " + ", ".join(parts), highlight=False)
+    for xid in report.built:
+        console.print(f"  [green]built[/green] {xid}", highlight=False)
+    for xid in report.failed:
+        console.print(f"  [red]failed[/red] {xid} (see the log; retried later)", highlight=False)
 
 
 @campaign_app.command("upload")
