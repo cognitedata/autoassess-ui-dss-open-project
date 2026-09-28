@@ -262,7 +262,7 @@ class TestListTasks:
             INSPECTION_TASK_VIEW,
             {
                 "plan": {"space": SPACE, "externalId": "plan-001"},
-                "taskKind": "region",
+                "taskType": "region",
                 "inspectionType": "ndt_thickness",
                 "position3d": [1.0, 2.0, 3.0],
                 "normalVector": [0.0, 1.0, 0.0],
@@ -291,7 +291,7 @@ class TestListTasks:
             INSPECTION_TASK_VIEW,
             {
                 "plan": {"space": SPACE, "externalId": "plan-001"},
-                "taskKind": "element",
+                "taskType": "element",
                 "inspectionType": "visual",
                 "targetElement": {"space": SPACE, "externalId": "elem-001"},
             },
@@ -331,7 +331,7 @@ class TestListTasks:
             INSPECTION_TASK_VIEW,
             {
                 "plan": {"space": SPACE, "externalId": "plan-001"},
-                "taskKind": "element",
+                "taskType": "element",
                 "inspectionType": "visual",
                 "targetElement": {"space": SPACE, "externalId": "elem-missing"},
             },
@@ -352,7 +352,7 @@ class TestListTasks:
             INSPECTION_TASK_VIEW,
             {
                 "plan": {"space": SPACE, "externalId": "plan-001"},
-                "taskKind": "bogus",
+                "taskType": "bogus",
                 "inspectionType": "visual",
             },
         )

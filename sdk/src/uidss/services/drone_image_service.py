@@ -22,6 +22,7 @@ from uidss.cdf.data_model import (
     view_key,
 )
 from uidss.models import DroneImage
+from uidss.services.cognite_file import CogniteFileSpec, upload_cognite_files
 
 log = structlog.get_logger()
 
@@ -324,10 +325,20 @@ class CdfDroneImageService:
         yaml_path = _resolve_sensor_yaml(folder, sensor_yaml)
         sensor = parse_sensor_yaml(yaml_path)
 
+        file_specs = [
+            CogniteFileSpec(
+                path=folder / "rgb" / Path(entry.filename).name,
+                external_id=f"drone-image-file-{campaign_external_id}-frame-{i + 1}",
+                mime_type="image/png",
+                tags=["autoassess", "drone_image", f"campaign:{campaign_external_id}"],
+            )
+            for i, entry in enumerate(rgb_entries)
+        ]
+        file_ids = upload_cognite_files(self._client, file_specs)
+
         nodes: list[NodeApply] = []
-        for i, entry in enumerate(rgb_entries):
+        for i, (entry, cdf_file_id) in enumerate(zip(rgb_entries, file_ids, strict=True)):
             frame_id = i + 1
-            img_path = folder / "rgb" / Path(entry.filename).name
 
             imu = _interpolate_pose(poses, entry.timestamp)
             px, py, pz, cqx, cqy, cqz, cqw = _apply_t_bs(
@@ -340,14 +351,6 @@ class CdfDroneImageService:
                 imu.qw,
                 sensor.t_bs,
             )
-
-            file_result = self._client.files.upload(
-                str(img_path),
-                name=img_path.name,
-                mime_type="image/png",
-                overwrite=True,
-            )
-            cdf_file_id = int(getattr(file_result, "id", 0))
 
             ext_id = f"drone-image-{campaign_external_id}-frame-{frame_id}"
             nodes.append(

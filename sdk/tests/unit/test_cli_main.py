@@ -11,7 +11,8 @@ from pydantic import BaseModel, ValidationError
 from typer.testing import CliRunner
 
 from uidss.cli.main import app
-from uidss.models import Area, InspectionPlan, Vessel
+from uidss.models import Area, InspectionPlan, InspectionResult, Vessel
+from uidss.services.threed_service import CampaignCadModel
 
 runner = CliRunner()
 
@@ -200,3 +201,71 @@ class TestFriendlyErrorHandling:
             assert e.exit_code == 3
         else:
             raise AssertionError("expected typer.Exit to propagate")
+
+
+class TestCampaignBuild3dModel:
+    def test_builds_model_from_the_campaigns_ply_and_waits(self, tmp_path: Path) -> None:
+        campaign_svc = MagicMock()
+        campaign_svc.get.return_value = _campaign(cdf_file_ids=(11,))
+        campaign_svc.download_map.side_effect = lambda _s, _e, out: [_write_tiny_ply(out)]
+        threed_svc = MagicMock()
+        threed_svc.create_cad_model.return_value = CampaignCadModel("result-1", 5, 6, "Queued", 7)
+        threed_svc.wait_until_processed.return_value = "Done"
+
+        with patch("uidss.cli.main._get_client", return_value=_client(campaign_svc, threed_svc)):
+            result = runner.invoke(app, ["campaign", "build-3d-model", "--campaign", "result-1"])
+
+        assert result.exit_code == 0, result.output
+        kwargs = threed_svc.create_cad_model.call_args.kwargs
+        assert kwargs["campaign_external_id"] == "result-1"
+        assert kwargs["zip_path"].suffix == ".zip"
+        threed_svc.wait_until_processed.assert_called_once()
+        assert "model 5" in result.output and "Done" in result.output
+
+    def test_errors_when_campaign_has_no_ply_mesh(self) -> None:
+        campaign_svc = MagicMock()
+        campaign_svc.get.return_value = _campaign(cdf_file_ids=())
+
+        with patch("uidss.cli.main._get_client", return_value=_client(campaign_svc, MagicMock())):
+            result = runner.invoke(app, ["campaign", "build-3d-model", "--campaign", "result-1"])
+
+        assert result.exit_code == 1
+        assert "no PLY mesh" in result.output
+
+    def test_errors_when_campaign_not_found(self) -> None:
+        campaign_svc = MagicMock()
+        campaign_svc.get.return_value = None
+
+        with patch("uidss.cli.main._get_client", return_value=_client(campaign_svc, MagicMock())):
+            result = runner.invoke(app, ["campaign", "build-3d-model", "--campaign", "nope"])
+
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+
+def _campaign(cdf_file_ids: tuple[int, ...]) -> InspectionResult:
+    return InspectionResult(
+        space="autoassess",
+        external_id="result-1",
+        area_external_id="a-1",
+        campaign_date="2026-09-25",
+        status="Complete",
+        cdf_file_ids=cdf_file_ids,
+    )
+
+
+def _client(campaign_svc: MagicMock, threed_svc: MagicMock) -> tuple[MagicMock, ...]:
+    others = [MagicMock() for _ in range(4)]
+    return (MagicMock(), MagicMock(), MagicMock(), campaign_svc, *others, threed_svc)
+
+
+def _write_tiny_ply(out_dir: Path) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "mesh.ply"
+    path.write_text(
+        "ply\nformat ascii 1.0\nelement vertex 3\n"
+        "property float x\nproperty float y\nproperty float z\n"
+        "element face 1\nproperty list uchar int vertex_index\nend_header\n"
+        "0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n"
+    )
+    return path

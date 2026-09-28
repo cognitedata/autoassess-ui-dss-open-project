@@ -16,6 +16,7 @@ from uidss.services.drone_image_service import CdfDroneImageService
 from uidss.services.ndt_measurement_service import CdfNdtMeasurementService
 from uidss.services.plan_service import CdfPlanService
 from uidss.services.structural_element_service import CdfStructuralElementService
+from uidss.services.threed_service import CdfThreeDService
 from uidss.services.vessel_service import CdfVesselService
 
 
@@ -30,6 +31,7 @@ class UidssClient:
     measurements: CdfNdtMeasurementService
     campaign_metrics: CdfCampaignMetricService
     drone_images: CdfDroneImageService
+    threed: CdfThreeDService
 
     @classmethod
     def from_env(cls) -> UidssClient:
@@ -54,4 +56,5 @@ class UidssClient:
             measurements=CdfNdtMeasurementService(client),
             campaign_metrics=CdfCampaignMetricService(client),
             drone_images=CdfDroneImageService(client),
+            threed=CdfThreeDService(client),
         )

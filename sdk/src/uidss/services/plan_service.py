@@ -197,7 +197,7 @@ def _map_task_node(item: object, client: CogniteClient) -> InspectionTask:
     plan_ref = task_props.get("plan") or {}
     plan_eid = str(plan_ref.get("externalId", "")) if isinstance(plan_ref, dict) else ""
 
-    raw_kind = str(task_props.get("taskKind", "region"))
+    raw_kind = str(task_props.get("taskType", "region"))
     kind = cast(TaskKind, raw_kind if raw_kind in _VALID_TASK_KINDS else "region")
 
     raw_itype = str(task_props.get("inspectionType", "visual"))

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import functools
 import logging
+import os
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, ParamSpec, TypeVar
@@ -16,6 +18,7 @@ from rich.console import Console
 from rich.table import Table
 
 from uidss.auth import make_cognite_client
+from uidss.cdf.data_model import SPACE
 from uidss.cli.file_scanner import missing_type_notes, scan_folder
 from uidss.cli.selectors import (
     _format_plan_label,
@@ -38,7 +41,9 @@ from uidss.services.drone_image_service import CdfDroneImageService
 from uidss.services.ndt_measurement_service import CdfNdtMeasurementService
 from uidss.services.plan_service import CdfPlanService
 from uidss.services.structural_element_service import CdfStructuralElementService
+from uidss.services.threed_service import CdfThreeDService, ThreeDServiceProtocol
 from uidss.services.vessel_service import CdfVesselService
+from uidss.threed.pipeline import build_campaign_cad_model
 
 log = structlog.get_logger()
 console = Console()
@@ -98,6 +103,7 @@ def _get_client() -> tuple[
     CdfStructuralElementService,
     CdfNdtMeasurementService,
     CdfCampaignMetricService,
+    CdfThreeDService,
 ]:
     settings = UidssSettings()  # type: ignore
     client = make_cognite_client(settings)
@@ -110,7 +116,24 @@ def _get_client() -> tuple[
         CdfStructuralElementService(client),
         CdfNdtMeasurementService(client),
         CdfCampaignMetricService(client),
+        CdfThreeDService(client),
     )
+
+
+def _build_and_wait(
+    threed_svc: ThreeDServiceProtocol, campaign_id: str, ply_paths: list[Path], work_dir: Path
+) -> None:
+    """Convert the campaign's PLY(s) to a CDF CAD model and wait until Reveal can load it."""
+    with console.status("  Converting mesh for the 3D viewer (this can take minutes)..."):
+        model = build_campaign_cad_model(
+            ply_paths, campaign_id, threed_svc, work_dir, workers=os.cpu_count() or 1
+        )
+    console.print(
+        f"  3D model {model.model_id} (revision {model.revision_id}) created; processing in CDF..."
+    )
+    with console.status("  Waiting for CDF 3D processing..."):
+        status = threed_svc.wait_until_processed(model)
+    console.print(f"  [green]OK[/green]  3D model {model.model_id} {status}")
 
 
 @plan_app.command("list")
@@ -199,6 +222,9 @@ def plan_download_map(
 @_friendly_errors
 def campaign_upload(
     folder: Path = typer.Argument(..., help="Mission output folder to upload"),
+    no_3d_model: bool = typer.Option(
+        False, "--no-3d-model", help="Skip building the CDF 3D model the viewer streams"
+    ),
 ) -> None:
     """Upload mission artifacts from a folder to CDF."""
     if not folder.is_dir():
@@ -231,6 +257,7 @@ def campaign_upload(
         elements_svc,
         measurements_svc,
         metrics_svc,
+        threed_svc,
     ) = _get_client()
 
     vessel = pick_vessel(vessels_svc.list())
@@ -261,6 +288,7 @@ def campaign_upload(
 
     # --- Assign roles and upload ---
     uploaded_new_file = False
+    uploaded_plys: list[Path] = []
 
     for ply in scanned.ply_files:
         console.print(f"\n  {ply.relative_to(folder)}")
@@ -268,6 +296,7 @@ def campaign_upload(
             with console.status("  Uploading..."):
                 fid = artifacts_svc.upload_ply(ply, area.external_id)
             ply_file_ids.append(fid)
+            uploaded_plys.append(ply)
             uploaded_new_file = True
             console.print(f"  [green]OK[/green]  (file id {fid})")
 
@@ -288,6 +317,10 @@ def campaign_upload(
             campaign_space, campaign_id, ply_file_ids, pcd_file_ids, pcd_file_labels
         )
         console.print("Campaign updated with file IDs.")
+
+    if uploaded_plys and not no_3d_model:
+        with tempfile.TemporaryDirectory() as work_dir:
+            _build_and_wait(threed_svc, campaign_id, uploaded_plys, Path(work_dir))
 
     for csv_file in scanned.csv_files:
         console.print(f"\n  {csv_file.relative_to(folder)}")
@@ -323,6 +356,40 @@ def campaign_upload(
         if plan:
             plans_svc.update_status(plan.space, plan.external_id, "Complete")
             console.print(f"Plan {plan.external_id} marked Complete.")
+
+
+@campaign_app.command("build-3d-model")
+@_friendly_errors
+def campaign_build_3d_model(
+    campaign: str | None = typer.Option(
+        None, "--campaign", "-c", help="Campaign external id (skips the pickers)"
+    ),
+) -> None:
+    """Build the CDF 3D model for an existing campaign from its PLY mesh(es)."""
+    vessels_svc, areas_svc, _plans, campaigns_svc, *_rest, threed_svc = _get_client()
+
+    if campaign is None:
+        vessel = pick_vessel(vessels_svc.list())
+        area = pick_area(areas_svc.list(vessel.space, vessel.external_id))
+        picked = pick_or_create_campaign(campaigns_svc.list(area.space, area.external_id))
+        if picked is None:
+            raise ValueError("Pick an existing campaign; build-3d-model does not create one.")
+        campaign = picked.external_id
+
+    result = campaigns_svc.get(SPACE, campaign)
+    if result is None:
+        raise ValueError(f"Campaign {campaign!r} not found.")
+    if not result.cdf_file_ids:
+        raise ValueError(f"Campaign {campaign!r} has no PLY mesh to convert.")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        work_dir = Path(tmp)
+        with console.status("  Downloading the campaign's mesh..."):
+            files = campaigns_svc.download_map(SPACE, campaign, work_dir / "source")
+        plys = [f for f in files if f.suffix.lower() == ".ply"]
+        if not plys:
+            raise ValueError(f"Campaign {campaign!r} has no PLY mesh to convert.")
+        _build_and_wait(threed_svc, campaign, plys, work_dir / "build")
 
 
 @campaign_app.command("upload-drone-images")

@@ -1,4 +1,4 @@
-"""Artifact service — upload PLY and PCD files to CDF Files API."""
+"""Artifact service — upload PLY and PCD files to CDF as CogniteFiles."""
 
 from __future__ import annotations
 
@@ -9,7 +9,11 @@ from typing import Protocol
 import structlog
 from cognite.client import CogniteClient
 
+from uidss.services.cognite_file import make_file_external_id, upload_cognite_file
+
 log = structlog.get_logger()
+
+_MIME_TYPE = "application/octet-stream"
 
 
 class ArtifactServiceProtocol(Protocol):
@@ -22,32 +26,23 @@ class CdfArtifactService:
     _client: CogniteClient
 
     def upload_ply(self, path: Path, area_external_id: str) -> int:
-        result = self._client.files.upload(
-            str(path),
-            name=path.name,
-            mime_type="application/octet-stream",
-            metadata={"area": area_external_id, "fileType": "ply_mesh"},
-            overwrite=True,
+        file_id = upload_cognite_file(
+            self._client,
+            path,
+            make_file_external_id(area_external_id, path),
+            _MIME_TYPE,
+            ["autoassess", "ply_mesh", f"area:{area_external_id}"],
         )
-        file_id = _extract_file_id(result)
         log.info("uploaded PLY", path=str(path), file_id=file_id)
         return file_id
 
     def upload_pcd(self, path: Path, area_external_id: str, label: str) -> int:
-        result = self._client.files.upload(
-            str(path),
-            name=path.name,
-            mime_type="application/octet-stream",
-            metadata={"area": area_external_id, "fileType": "pcd_pointcloud", "label": label},
-            overwrite=True,
+        file_id = upload_cognite_file(
+            self._client,
+            path,
+            make_file_external_id(area_external_id, path),
+            _MIME_TYPE,
+            ["autoassess", "pcd_pointcloud", f"area:{area_external_id}", f"label:{label}"],
         )
-        file_id = _extract_file_id(result)
         log.info("uploaded PCD", path=str(path), label=label, file_id=file_id)
         return file_id
-
-
-def _extract_file_id(result: object) -> int:
-    file_id = getattr(result, "id", None)
-    if file_id is None:
-        raise RuntimeError(f"CDF Files upload returned no id: {result!r}")
-    return int(file_id)
