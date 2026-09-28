@@ -1,17 +1,28 @@
-"""Tests for the `dss plan list` CLI command."""
+"""Tests for the `dss` CLI commands."""
 
 from __future__ import annotations
 
+import re
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import typer
+from click.testing import Result
 from cognite.client.exceptions import CogniteAPIError
 from pydantic import BaseModel, ValidationError
 from typer.testing import CliRunner
 
 from uidss.cli.main import app
-from uidss.models import Area, InspectionPlan, InspectionResult, Vessel
+from uidss.models import (
+    Area,
+    InspectionPlan,
+    InspectionResult,
+    InspectionTask,
+    NewRegionTask,
+    Vessel,
+)
 from uidss.services.threed_service import CampaignCadModel
 
 runner = CliRunner()
@@ -241,6 +252,316 @@ class TestCampaignBuild3dModel:
 
         assert result.exit_code == 1
         assert "not found" in result.output
+
+
+_FINDINGS_CSV = (
+    "id,x,y,z,class,confidence\n"
+    "c1,9.9,5,5,corrosion,0.9\n"
+    "c2,9.9,5.3,5,corrosion,0.8\n"
+    "k1,5,5,0.1,crack,0.7\n"
+)
+
+
+class TestPlanImportFindings:
+    def test_dry_run_prints_the_tasks_and_writes_nothing(self, tmp_path: Path) -> None:
+        plans = _StubPlanService()
+
+        result = _import(tmp_path, plans, _StubCampaignService(), "--dry-run")
+
+        assert result.exit_code == 0, result.output
+        assert plans.created == []
+        assert plans.added == []
+        output = _plain(result.output)
+        assert "Dry run" in output
+        assert "3 findings read" in output
+        assert "2 tasks" in output
+
+    def test_creates_a_draft_plan_with_one_task_per_merged_finding(self, tmp_path: Path) -> None:
+        plans = _StubPlanService()
+
+        result = _import(tmp_path, plans, _StubCampaignService(), "--yes", "--name", "Run 7")
+
+        assert result.exit_code == 0, result.output
+        [(area, map_id, name, description)] = plans.created
+        assert (area, map_id, name) == ("a-1", "result-new", "Run 7")
+        assert description is not None and "findings.csv" in description
+        [(plan_id, tasks)] = plans.added
+        assert plan_id == "plan-new"
+        by_id = {t.suggestion_id: t for t in tasks}
+        assert set(by_id) == {"finding:c1+c2", "finding:k1"}
+        assert by_id["finding:c1+c2"].normal_vector == pytest.approx((-1.0, 0.0, 0.0))
+        assert by_id["finding:k1"].normal_vector == pytest.approx((0.0, 0.0, 1.0))
+        assert "plan-new" in _plain(result.output)
+
+    def test_default_map_is_the_newest_complete_campaign(self, tmp_path: Path) -> None:
+        plans = _StubPlanService()
+        campaigns = _StubCampaignService(
+            [
+                _result("result-running", "2026-09-27", "InProgress"),
+                _result("result-new", "2026-09-26"),
+                _result("result-old", "2026-09-01"),
+            ]
+        )
+
+        result = _import(tmp_path, plans, campaigns, "--yes", map_id=None)
+
+        assert result.exit_code == 0, result.output
+        assert plans.created[0][1] == "result-new"
+        assert campaigns.proxy_requests == ["result-new"]
+
+    def test_default_plan_name_mentions_the_csv(self, tmp_path: Path) -> None:
+        plans = _StubPlanService()
+
+        _import(tmp_path, plans, _StubCampaignService(), "--yes")
+
+        assert plans.created[0][2].startswith("Findings findings ")
+
+    def test_refuses_a_map_that_is_not_a_complete_campaign_of_the_area(
+        self, tmp_path: Path
+    ) -> None:
+        plans = _StubPlanService()
+
+        result = _import(tmp_path, plans, _StubCampaignService(), "--yes", map_id="result-x")
+
+        assert result.exit_code == 1
+        assert "result-x" in _plain(result.output)
+        assert plans.created == []
+
+    def test_refuses_to_add_to_a_plan_that_is_not_draft(self, tmp_path: Path) -> None:
+        plans = _StubPlanService(plans=[_plan("plan-ready", "Ready")])
+
+        result = _import(tmp_path, plans, _StubCampaignService(), "--yes", "--plan", "plan-ready")
+
+        assert result.exit_code == 1
+        assert "Draft" in _plain(result.output)
+        assert plans.created == []
+        assert plans.added == []
+
+    def test_adds_to_an_existing_draft_plan_using_its_map(self, tmp_path: Path) -> None:
+        plans = _StubPlanService(plans=[_plan("plan-draft", "Draft", map_id="result-old")])
+        campaigns = _StubCampaignService(
+            [_result("result-new", "2026-09-26"), _result("result-old", "2026-09-01")]
+        )
+
+        result = _import(tmp_path, plans, campaigns, "--yes", "--plan", "plan-draft", map_id=None)
+
+        assert result.exit_code == 0, result.output
+        assert plans.created == []
+        assert [plan_id for plan_id, _ in plans.added] == ["plan-draft"]
+        assert campaigns.proxy_requests == ["result-old"]
+
+    def test_reimport_skips_findings_already_in_the_plan(self, tmp_path: Path) -> None:
+        plans = _StubPlanService(
+            plans=[_plan("plan-draft", "Draft")],
+            tasks=[_task("finding:c1+c2"), _task("finding:k1")],
+        )
+
+        result = _import(tmp_path, plans, _StubCampaignService(), "--yes", "--plan", "plan-draft")
+
+        assert result.exit_code == 0, result.output
+        assert plans.added == []
+        assert "Nothing to import" in _plain(result.output)
+
+    def test_reimport_adds_only_new_findings(self, tmp_path: Path) -> None:
+        plans = _StubPlanService(
+            plans=[_plan("plan-draft", "Draft")], tasks=[_task("finding:c1+c2")]
+        )
+
+        result = _import(tmp_path, plans, _StubCampaignService(), "--yes", "--plan", "plan-draft")
+
+        assert result.exit_code == 0, result.output
+        [(_, tasks)] = plans.added
+        assert [t.suggestion_id for t in tasks] == ["finding:k1"]
+
+    def test_normals_require_rejects_rows_without_normals(self, tmp_path: Path) -> None:
+        plans = _StubPlanService()
+        csv = "id,x,y,z,nx,ny,nz\nn1,9.9,5,5,-1,0,0\nbare,5,5,0.1,,,\n"
+
+        result = _import(
+            tmp_path, plans, _StubCampaignService(), "--yes", "--normals", "require", csv=csv
+        )
+
+        assert result.exit_code == 0, result.output
+        assert "line 3" in _plain(result.output)
+        [(_, tasks)] = plans.added
+        assert [t.suggestion_id for t in tasks] == ["finding:n1"]
+
+    def test_strict_makes_row_errors_fatal(self, tmp_path: Path) -> None:
+        plans = _StubPlanService()
+        csv = "id,x,y,z\nok,9.9,5,5\nbad,abc,5,5\n"
+
+        result = _import(tmp_path, plans, _StubCampaignService(), "--yes", "--strict", csv=csv)
+
+        assert result.exit_code == 1
+        assert "line 3" in _plain(result.output)
+        assert plans.created == []
+
+    def test_falls_back_to_centre_normals_without_a_3d_model(self, tmp_path: Path) -> None:
+        plans = _StubPlanService()
+
+        result = _import(tmp_path, plans, _StubCampaignService(proxy=False), "--yes")
+
+        assert result.exit_code == 0, result.output
+        assert "no 3D model" in _plain(result.output)
+        assert len(plans.added[0][1]) == 2
+
+    def test_filters_by_confidence_and_class(self, tmp_path: Path) -> None:
+        plans = _StubPlanService()
+
+        result = _import(
+            tmp_path,
+            plans,
+            _StubCampaignService(),
+            "--yes",
+            "--min-confidence",
+            "0.75",
+            "--class",
+            "corrosion",
+        )
+
+        assert result.exit_code == 0, result.output
+        [(_, tasks)] = plans.added
+        assert [t.suggestion_id for t in tasks] == ["finding:c1+c2"]
+
+
+# --- plan import-findings helpers -------------------------------------------
+
+
+class _StubVesselService:
+    def list(self) -> list[Vessel]:
+        return [_VESSEL]
+
+
+class _StubAreaService:
+    def list(self, vessel_space: str, vessel_external_id: str) -> list[Area]:
+        return [_AREA]
+
+
+class _StubCampaignService:
+    def __init__(self, campaigns: list[InspectionResult] | None = None, proxy: bool = True) -> None:
+        self._campaigns = campaigns if campaigns is not None else [_result("result-new")]
+        self._proxy = proxy
+        self.proxy_requests: list[str] = []
+
+    def list(self, area_space: str, area_external_id: str) -> list[InspectionResult]:
+        return self._campaigns
+
+    def download_collision_proxy(self, campaign_external_id: str, out_dir: Path) -> Path | None:
+        self.proxy_requests.append(campaign_external_id)
+        return _write_cube_ply(out_dir, size=10.0) if self._proxy else None
+
+
+class _StubPlanService:
+    def __init__(
+        self,
+        plans: list[InspectionPlan] | None = None,
+        tasks: list[InspectionTask] | None = None,
+    ) -> None:
+        self._plans = plans or []
+        self._tasks = tasks or []
+        self.created: list[tuple[str, str, str, str | None]] = []
+        self.added: list[tuple[str, list[NewRegionTask]]] = []
+
+    def list(self, area_space: str, area_external_id: str) -> list[InspectionPlan]:
+        return self._plans
+
+    def list_tasks(self, plan_external_id: str) -> list[InspectionTask]:
+        return self._tasks
+
+    def create(
+        self, area_external_id: str, map_external_id: str, name: str, description: str | None
+    ) -> str:
+        self.created.append((area_external_id, map_external_id, name, description))
+        return "plan-new"
+
+    def add_region_tasks(self, plan_external_id: str, tasks: Sequence[NewRegionTask]) -> list[str]:
+        self.added.append((plan_external_id, list(tasks)))
+        return [f"task-{i}" for i in range(len(tasks))]
+
+
+_VESSEL = Vessel(space="autoassess", external_id="v-1", name="Ship A", vessel_type="tanker")
+_AREA = Area(
+    space="autoassess",
+    external_id="a-1",
+    name="BWT Port",
+    area_type="ballast_water_tank",
+    vessel_external_id="v-1",
+)
+
+
+def _import(
+    tmp_path: Path,
+    plans: _StubPlanService,
+    campaigns: _StubCampaignService,
+    *args: str,
+    csv: str = _FINDINGS_CSV,
+    map_id: str | None = "result-new",
+) -> Result:
+    csv_path = tmp_path / "findings.csv"
+    csv_path.write_text(csv)
+    services = (_StubVesselService(), _StubAreaService(), plans, campaigns, *([None] * 5))
+    cli_args = ["plan", "import-findings", str(csv_path), "--area", "a-1", *args]
+    if map_id is not None:
+        cli_args += ["--map", map_id]
+    # _get_client is the CLI's only service factory; stubs are injected through it.
+    with patch("uidss.cli.main._get_client", return_value=services):
+        return runner.invoke(app, cli_args)
+
+
+def _result(
+    external_id: str, campaign_date: str = "2026-09-26", status: str = "Complete"
+) -> InspectionResult:
+    return InspectionResult(
+        space="autoassess",
+        external_id=external_id,
+        area_external_id="a-1",
+        campaign_date=campaign_date,
+        status="Complete" if status == "Complete" else "InProgress",
+    )
+
+
+def _plan(external_id: str, status: str, map_id: str = "result-new") -> InspectionPlan:
+    return InspectionPlan(
+        space="autoassess",
+        external_id=external_id,
+        area_external_id="a-1",
+        status="Ready" if status == "Ready" else "Draft",
+        created_time=0,
+        map_external_id=map_id,
+    )
+
+
+def _task(suggestion_id: str) -> InspectionTask:
+    return InspectionTask(
+        space="autoassess",
+        external_id=f"task-{suggestion_id}",
+        plan_external_id="plan-draft",
+        kind="region",
+        inspection_type="visual",
+        suggestion_id=suggestion_id,
+    )
+
+
+def _plain(output: str) -> str:
+    """Strip ANSI styling (FORCE_COLOR in some shells) and join Rich's wrapped lines."""
+    return re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", output)
+
+
+def _write_cube_ply(out_dir: Path, size: float) -> Path:
+    """An axis-aligned [0, size]³ box as an ASCII PLY: 8 corners, 12 triangles."""
+    out_dir.mkdir(parents=True, exist_ok=True)
+    corners = [(x, y, z) for x in (0, size) for y in (0, size) for z in (0, size)]
+    quads = [(0, 1, 3, 2), (4, 6, 7, 5), (0, 4, 5, 1), (2, 3, 7, 6), (0, 2, 6, 4), (1, 5, 7, 3)]
+    faces = [tri for a, b, c, d in quads for tri in ((a, b, c), (a, c, d))]
+    path = out_dir / "proxy.ply"
+    path.write_text(
+        "ply\nformat ascii 1.0\nelement vertex 8\n"
+        "property float x\nproperty float y\nproperty float z\n"
+        "element face 12\nproperty list uchar int vertex_index\nend_header\n"
+        + "".join(f"{x} {y} {z}\n" for x, y, z in corners)
+        + "".join(f"3 {a} {b} {c}\n" for a, b, c in faces)
+    )
+    return path
 
 
 def _campaign(cdf_file_ids: tuple[int, ...]) -> InspectionResult:

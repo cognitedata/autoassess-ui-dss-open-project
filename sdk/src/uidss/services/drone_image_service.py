@@ -44,7 +44,7 @@ class SensorConfig:
     height: int
     near_plane: float
     far_plane: float
-    t_bs: list[float]  # row-major 4×4
+    t_bs: list[float]  # row-major 4x4
 
 
 def parse_sensor_yaml(yaml_path: Path) -> SensorConfig:
@@ -136,7 +136,7 @@ def _apply_t_bs(
     qw: float,
     t_bs: list[float],
 ) -> tuple[float, float, float, float, float, float, float]:
-    """Compute T_WS = T_WB × T_BS and return (px, py, pz, qx, qy, qz, qw)."""
+    """Compute T_WS = T_WB * T_BS and return (px, py, pz, qx, qy, qz, qw)."""
     t_wb = _pose_to_mat4(tx, ty, tz, qx, qy, qz, qw)
     t_ws = _mat4_mul(t_wb, t_bs)
 

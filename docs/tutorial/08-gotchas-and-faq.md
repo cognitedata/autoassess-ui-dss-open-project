@@ -19,7 +19,7 @@ These are current limitations of the stack. Work around them, or pick one as an 
 | # | Issue | Impact / workaround |
 |---|---|---|
 | 1 | **Older files are classic Files API files.** Everything uploaded before the CogniteFile switch, and anything from `scripts/upload-3d.ts`, has no instance ID. | They still load by numeric ID. Only create new files as `CogniteFile` ([chapter 2](02-data-model.md#files-api-vs-data-modeling-read-this-its-the-non-obvious-part)). |
-| 2 | **The CLI is interactive only.** | For automation, use the Python API ([chapter 4, part 2](04-ground-station-sdk.md#part-2-scripting-with-the-python-api-non-interactive)). |
+| 2 | **Most CLI commands are interactive only** (`plan import-findings` and `campaign build-3d-model` take flags). | For automation, use the Python API ([chapter 4, part 2](04-ground-station-sdk.md#part-2-scripting-with-the-python-api-non-interactive)). |
 | 3 | `dss plan download` lets you pick **any** plan status. | Pick a **Ready** plan. Draft plans may still change. |
 | 4 | `campaigns.update_file_ids` **overwrites** the file lists. | Pass the existing IDs plus your new ones (the CLI already does this). |
 | 5 | Every PLY/PCD upload creates a **new** `CogniteFile` (unique external ID), even if a file with the same name exists. | Re-running an upload duplicates files; avoid re-uploading. Drone images use deterministic IDs per campaign and frame. |
@@ -64,6 +64,12 @@ These are current limitations of the stack. Work around them, or pick one as an 
 **I can't create a plan**
 - A plan needs a reference map, which is a **Complete** campaign in that area. Mark your campaign Complete at the end of `dss campaign upload`.
 
+**`import-findings` says "Nothing to import"**
+- Every finding is already in the plan passed with `--plan` (same `finding:<id>` suggestion ID), or all rows were rejected or filtered out. Check the counts it prints. To import the same findings again, create a new plan (leave out `--plan`) or change their `id`s.
+
+**`import-findings` normals point the wrong way**
+- Without a 3D model for the map campaign (or more than 1 m from its surface), normals point from the finding towards the area's centre, which is rough. Run `dss campaign build-3d-model --campaign <map>` first, or put `nx,ny,nz` in the CSV.
+
 **I can't edit a plan**
 - Ready plans are read-only. Switch it back to Draft in the Plans tab. The map can only be changed in Draft.
 
@@ -71,6 +77,9 @@ These are current limitations of the stack. Work around them, or pick one as an 
 
 **Which coordinate frame are the positions in?**
 The world frame of the campaign's map files, in metres. A plan's task coordinates are in the frame of its `map` campaign (`mapExternalId`).
+
+**My findings are in another frame. Can `import-findings` convert them?**
+No. The CSV's `x,y,z` must already be in the **map campaign's frame**, the same frame as `plan.json` and `dss plan download-map`. If your pipeline works in another frame (a different campaign's map, or a camera or vessel frame), transform the points (and normals, rotation only) into the map frame first, then pass that campaign with `--map`. If you're not sure, run with `--dry-run` and check the `From` column: when most normals say `centre` rather than `model`, the points are probably not on the map's surface.
 
 **Is `SimDrone` part of the SDK? What do I use on my real drone?**
 No. `SimDrone` exists only in the Drone Sandbox (`sandbox/`), and its examples always name it `sim_drone`. The `uidss` calls in the sandbox (`vessels`, `areas`, `plans.list/download`) are the real SDK API. For your drone, write a class with the same verbs (`takeoff()`, `goto(Pose)`, `inspect(task_id)`, `return_home()`, `land()`), then run `dss campaign upload` on the mission folder. In the sandbox, `plans.update_status(...)` is simulated and never writes to CDF.

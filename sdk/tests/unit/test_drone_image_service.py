@@ -102,7 +102,7 @@ class TestApplyTbs:
 
     def test_ship_ch_t_bs_changes_pose(self) -> None:
         cfg = parse_sensor_yaml(SENSOR_YAML)
-        px, py, pz, qx, qy, qz, qw = _apply_t_bs(0, 0, 0, 0, 0, 0, 1, cfg.t_bs)
+        px, py, pz, *_ = _apply_t_bs(0, 0, 0, 0, 0, 0, 1, cfg.t_bs)
         # T_BS translation offset from ship_CH (non-zero)
         assert not (px == pytest.approx(0) and py == pytest.approx(0) and pz == pytest.approx(0))
 

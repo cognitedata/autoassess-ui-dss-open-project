@@ -5,10 +5,13 @@ from __future__ import annotations
 import functools
 import logging
 import os
+import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from datetime import date
+from enum import StrEnum
 from pathlib import Path
-from typing import Annotated, ParamSpec, TypeVar
+from typing import Annotated
 
 import structlog
 import typer
@@ -27,23 +30,38 @@ from uidss.cli.selectors import (
     ask_pcd_label,
     confirm,
     pick_area,
+    pick_map_campaign,
     pick_or_create_campaign,
     pick_plan,
     pick_plan_to_complete,
     pick_vessel,
 )
 from uidss.config import UidssSettings
-from uidss.services.area_service import CdfAreaService
+from uidss.findings import (
+    DEFAULT_MERGE_RADIUS_M,
+    DEFAULT_RADIUS_M,
+    Finding,
+    FindingsPlan,
+    NormalMode,
+    RowError,
+    filter_findings,
+    plan_tasks_from_findings,
+    read_findings_csv,
+    require_normals,
+)
+from uidss.models import Area, InspectionType, Vessel
+from uidss.services.area_service import AreaServiceProtocol, CdfAreaService
 from uidss.services.artifact_service import CdfArtifactService
 from uidss.services.campaign_metric_service import CdfCampaignMetricService
-from uidss.services.campaign_service import CdfCampaignService
+from uidss.services.campaign_service import CampaignServiceProtocol, CdfCampaignService
 from uidss.services.drone_image_service import CdfDroneImageService
 from uidss.services.ndt_measurement_service import CdfNdtMeasurementService
-from uidss.services.plan_service import CdfPlanService
+from uidss.services.plan_service import CdfPlanService, PlanServiceProtocol
 from uidss.services.structural_element_service import CdfStructuralElementService
 from uidss.services.threed_service import CdfThreeDService, ThreeDServiceProtocol
-from uidss.services.vessel_service import CdfVesselService
+from uidss.services.vessel_service import CdfVesselService, VesselServiceProtocol
 from uidss.threed.pipeline import build_campaign_cad_model
+from uidss.threed.ply import PlyMesh, read_ply
 
 log = structlog.get_logger()
 console = Console()
@@ -54,15 +72,12 @@ campaign_app = typer.Typer(help="Campaign upload commands.")
 app.add_typer(plan_app, name="plan")
 app.add_typer(campaign_app, name="campaign")
 
-_P = ParamSpec("_P")
-_R = TypeVar("_R")
 
-
-def _friendly_errors(fn: Callable[_P, _R]) -> Callable[_P, _R]:
+def _friendly_errors[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     """Catch expected CLI-boundary failures and report them without a raw traceback."""
 
     @functools.wraps(fn)
-    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+    def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
         try:
             return fn(*args, **kwargs)
         except typer.Exit:
@@ -216,6 +231,296 @@ def plan_download_map(
     written = campaign_svc.download_map(plan.space, plan.map_external_id, map_dir)
     for path in written:
         console.print(f"Downloaded [bold]{path.name}[/bold] to {path}")
+
+
+class _InspectionTypeChoice(StrEnum):
+    visual = "visual"
+    ndt_thickness = "ndt_thickness"
+
+
+class _NormalsChoice(StrEnum):
+    model = "model"
+    centre = "centre"
+    require = "require"
+
+
+_INSPECTION_TYPES: dict[_InspectionTypeChoice, InspectionType] = {
+    _InspectionTypeChoice.visual: "visual",
+    _InspectionTypeChoice.ndt_thickness: "ndt_thickness",
+}
+_NORMAL_MODES: dict[_NormalsChoice, NormalMode] = {
+    _NormalsChoice.model: "model",
+    _NormalsChoice.centre: "centre",
+    _NormalsChoice.require: "require",
+}
+_MAX_ERRORS_SHOWN = 20
+
+
+@plan_app.command("import-findings")
+@_friendly_errors
+def plan_import_findings(
+    csv_path: Path = typer.Argument(
+        ...,
+        help="Findings CSV: x,y,z (metres, map frame) required; optional id, nx,ny,nz, "
+        "radius, inspection_type, class, confidence, description.",
+        exists=True,
+        dir_okay=False,
+    ),
+    vessel: str | None = typer.Option(None, "--vessel", help="Vessel external id or name"),
+    area: str | None = typer.Option(None, "--area", help="Area external id or name"),
+    map_id: str | None = typer.Option(
+        None,
+        "--map",
+        help="Campaign whose map frame the coordinates are in (default: newest Complete)",
+    ),
+    plan_id: str | None = typer.Option(
+        None, "--plan", help="Add to this existing Draft plan instead of creating a new one"
+    ),
+    name: str | None = typer.Option(
+        None, "--name", help="Name of the new plan (default: 'Findings <csv name> <date>')"
+    ),
+    merge_radius: float = typer.Option(
+        DEFAULT_MERGE_RADIUS_M,
+        "--merge-radius",
+        min=0,
+        help="Merge findings within this distance (m) into one task; 0 disables",
+    ),
+    min_confidence: float | None = typer.Option(
+        None, "--min-confidence", min=0, max=1, help="Skip findings below this confidence"
+    ),
+    classes: list[str] | None = typer.Option(
+        None, "--class", help="Only import findings of this class (repeatable)"
+    ),
+    radius: float = typer.Option(
+        DEFAULT_RADIUS_M, "--radius", min=0.01, help="Radius (m) for rows without one"
+    ),
+    inspection_type: _InspectionTypeChoice = typer.Option(
+        _InspectionTypeChoice.visual,
+        "--inspection-type",
+        help="Inspection type for rows without one",
+    ),
+    normals: _NormalsChoice = typer.Option(
+        _NormalsChoice.model,
+        "--normals",
+        help="Missing normals: 'model' = nearest surface of the map's 3D model, "
+        "'centre' = point towards the area centre, 'require' = reject rows without one",
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show the tasks; write nothing"),
+    yes: bool = typer.Option(False, "--yes", "-y", help="Don't ask for confirmation"),
+    strict: bool = typer.Option(
+        False, "--strict", help="Fail on any invalid row instead of skipping it"
+    ),
+) -> None:
+    """Create a Draft inspection plan from a CSV of findings (one region task per finding).
+
+    Nearby findings are merged, missing normals are estimated from the map campaign's 3D
+    model, and findings already in the target plan (same suggestionId) are skipped, so
+    re-running with --plan is safe. Never marks the plan Ready.
+    """
+    # 1. Parse, validate and filter — before touching CDF.
+    findings, errors = read_findings_csv(csv_path)
+    read_count = len(findings) + len(errors)
+    if normals == _NormalsChoice.require:
+        findings, missing_normals = require_normals(findings)
+        errors = sorted([*errors, *missing_normals], key=lambda e: e.line)
+    _print_row_errors(errors)
+    if errors and strict:
+        raise ValueError(f"{len(errors)} invalid row(s) in {csv_path.name} (--strict).")
+    kept = filter_findings(findings, min_confidence, classes)
+    console.print(
+        f"{read_count} findings read, {len(errors)} rejected, "
+        f"{len(findings) - len(kept)} filtered out."
+    )
+    if not kept:
+        console.print("Nothing to import.")
+        return
+
+    # 2. Resolve the area, the target plan (or map) and what the plan already contains.
+    vessels_svc, areas_svc, plans_svc, campaigns_svc, *_ = _get_client()
+    the_vessel, the_area = _resolve_vessel_and_area(vessels_svc, areas_svc, vessel, area)
+    map_campaign_id, existing_ids = _resolve_target(
+        plans_svc, campaigns_svc, the_area, plan_id, map_id, interactive=not yes
+    )
+
+    # 3. Merge, estimate normals, skip what's already there.
+    mesh = None
+    if normals != _NormalsChoice.require:
+        mesh = _load_collision_proxy(campaigns_svc, map_campaign_id)
+    result = plan_tasks_from_findings(
+        kept,
+        merge_radius_m=merge_radius,
+        default_radius_m=radius,
+        default_inspection_type=_INSPECTION_TYPES[inspection_type],
+        normals=_NORMAL_MODES[normals],
+        mesh=mesh,
+        existing_suggestion_ids=existing_ids,
+    )
+    _print_findings_plan(result, kept, merge_radius, plan_id)
+    if not result.tasks:
+        console.print("Nothing to import: every finding is already in the plan.")
+        return
+    if dry_run:
+        console.print("[bold]Dry run[/bold]: nothing was written.")
+        return
+
+    target = f"plan {plan_id}" if plan_id else f"a new Draft plan in {the_area.name}"
+    if not yes and not confirm(f"Add {len(result.tasks)} task(s) to {target}?"):
+        raise typer.Exit(0)
+
+    # 4. Write: a new Draft plan (unless --plan), then the tasks.
+    if plan_id is None:
+        plan_name = name or f"Findings {csv_path.stem} {date.today().isoformat()}"
+        description = (
+            f"Imported from {csv_path.name} with dss plan import-findings: "
+            f"{len(kept)} findings in {len(result.tasks)} region tasks."
+        )
+        plan_id = plans_svc.create(the_area.external_id, map_campaign_id, plan_name, description)
+        console.print(f"Created Draft plan [bold]{plan_name}[/bold] ({plan_id})")
+    try:
+        plans_svc.add_region_tasks(plan_id, [t.task for t in result.tasks])
+    except CogniteAPIError:
+        console.print(
+            f"[yellow]Some tasks may not have been written.[/yellow] Re-run with "
+            f"--plan {plan_id} to add the missing ones (existing ones are skipped)."
+        )
+        raise
+    console.print(
+        f"[green]OK[/green]  Added {len(result.tasks)} task(s) to plan [bold]{plan_id}[/bold] "
+        f"({the_vessel.name} / {the_area.name}, map {map_campaign_id})."
+    )
+    console.print(
+        "Review the tasks in the AutoAssess viewer, then mark the plan Ready there "
+        "(or with the Python API)."
+    )
+
+
+def _print_row_errors(errors: Sequence[RowError]) -> None:
+    for error in errors[:_MAX_ERRORS_SHOWN]:
+        console.print(f"  [yellow]line {error.line}[/yellow]: {error.message}", highlight=False)
+    if len(errors) > _MAX_ERRORS_SHOWN:
+        console.print(f"  ... and {len(errors) - _MAX_ERRORS_SHOWN} more invalid rows")
+
+
+def _resolve_vessel_and_area(
+    vessels_svc: VesselServiceProtocol,
+    areas_svc: AreaServiceProtocol,
+    vessel: str | None,
+    area: str | None,
+) -> tuple[Vessel, Area]:
+    """--vessel/--area by external id or name; interactive pickers for what's missing."""
+    vessels = vessels_svc.list()
+    if vessel is not None:
+        vessels = [v for v in vessels if vessel in (v.external_id, v.name)]
+        if not vessels:
+            raise ValueError(f"Vessel {vessel!r} not found.")
+    if area is None:
+        picked = pick_vessel(vessels)
+        return picked, pick_area(areas_svc.list(picked.space, picked.external_id))
+    matches = [
+        (v, a)
+        for v in vessels
+        for a in areas_svc.list(v.space, v.external_id)
+        if area in (a.external_id, a.name)
+    ]
+    if not matches:
+        raise ValueError(f"Area {area!r} not found.")
+    if len(matches) > 1:
+        raise ValueError(f"Area {area!r} is ambiguous; pass --vessel or the area's external id.")
+    return matches[0]
+
+
+def _resolve_target(
+    plans_svc: PlanServiceProtocol,
+    campaigns_svc: CampaignServiceProtocol,
+    area: Area,
+    plan_id: str | None,
+    map_id: str | None,
+    interactive: bool,
+) -> tuple[str, list[str]]:
+    """Return (map campaign id, suggestion ids already in the target plan)."""
+    if plan_id is not None:
+        plans = plans_svc.list(area.space, area.external_id)
+        plan = next((p for p in plans if p.external_id == plan_id), None)
+        if plan is None:
+            raise ValueError(f"Plan {plan_id!r} not found in area {area.name}.")
+        if plan.status != "Draft":
+            raise ValueError(
+                f"Plan {plan_id} is {plan.status}; findings can only be added to a Draft plan."
+            )
+        if plan.map_external_id is None:
+            raise ValueError(f"Plan {plan_id} has no map; set one in the viewer first.")
+        if map_id is not None and map_id != plan.map_external_id:
+            raise ValueError(f"--map {map_id} is not the plan's map ({plan.map_external_id}).")
+        tasks = plans_svc.list_tasks(plan_id)
+        return plan.map_external_id, [t.suggestion_id for t in tasks if t.suggestion_id]
+
+    campaigns = campaigns_svc.list(area.space, area.external_id)
+    if map_id is None:
+        picked = pick_map_campaign(campaigns, interactive=interactive and sys.stdin.isatty())
+        return picked.external_id, []
+    if not any(c.external_id == map_id and c.status == "Complete" for c in campaigns):
+        raise ValueError(f"--map {map_id} is not a Complete campaign of area {area.name}.")
+    return map_id, []
+
+
+def _load_collision_proxy(
+    campaigns_svc: CampaignServiceProtocol, campaign_id: str
+) -> PlyMesh | None:
+    with (
+        tempfile.TemporaryDirectory() as tmp,
+        console.status("Downloading the map's 3D model (collision proxy)..."),
+    ):
+        path = campaigns_svc.download_collision_proxy(campaign_id, Path(tmp))
+        mesh = read_ply(path) if path is not None else None
+    if mesh is None:
+        console.print(
+            f"[yellow]Note:[/yellow] campaign {campaign_id} has no 3D model yet "
+            "(`dss campaign build-3d-model` builds it), so missing normals point towards "
+            "the findings' centre."
+        )
+    return mesh
+
+
+def _print_findings_plan(
+    result: FindingsPlan, kept: Sequence[Finding], merge_radius: float, plan_id: str | None
+) -> None:
+    if result.tasks:
+        table = Table(title="Tasks to add")
+        table.add_column("#", justify="right")
+        table.add_column("Suggestion id", overflow="fold")
+        table.add_column("Position (x, y, z)")
+        table.add_column("Normal")
+        table.add_column("From")
+        table.add_column("Radius", justify="right")
+        table.add_column("Type")
+        for i, planned in enumerate(result.tasks, start=1):
+            task = planned.task
+            table.add_row(
+                str(i),
+                task.suggestion_id or "",
+                _fmt_vec(task.position3d),
+                _fmt_vec(task.normal_vector),
+                planned.normal_source,
+                f"{task.radius_m:.2f}",
+                task.inspection_type,
+            )
+        console.print(table)
+    if result.already_in_plan:
+        console.print(f"{result.already_in_plan} findings are already in plan {plan_id}.")
+    new_findings = sum(len(t.cluster.member_ids) for t in result.tasks)
+    console.print(
+        f"{new_findings} new findings merged into {len(result.tasks)} tasks "
+        f"(merge radius {merge_radius:g} m)."
+    )
+    if result.tasks:
+        console.print(
+            f"Normals: {result.count('csv')} from the CSV, {result.count('model')} estimated "
+            f"from the 3D model, {result.count('centre')} pointing at the area centre (fallback)."
+        )
+
+
+def _fmt_vec(v: tuple[float, float, float]) -> str:
+    return f"{v[0]:.2f}, {v[1]:.2f}, {v[2]:.2f}"
 
 
 @campaign_app.command("upload")

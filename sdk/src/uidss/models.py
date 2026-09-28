@@ -14,6 +14,7 @@ ElementType = Literal["manhole", "longitudinal", "wall", "compartment"]
 InspectionType = Literal["visual", "ndt_thickness"]
 TaskKind = Literal["element", "region"]
 MetricUnit = Literal["decimal", "percentage"]
+Vec3 = tuple[float, float, float]
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,19 @@ class InspectionTask:
     position3d: tuple[float, float, float] | None = None
     normal_vector: tuple[float, float, float] | None = None
     radius_m: float | None = None
+    # Stable id of the recommendation / finding that generated this task, if any.
+    suggestion_id: str | None = None
+
+
+@dataclass(frozen=True)
+class NewRegionTask:
+    """A region task to be written to a plan (mirrors the web app's `NewRegionTask`)."""
+
+    position3d: Vec3
+    normal_vector: Vec3
+    radius_m: float
+    inspection_type: InspectionType = "visual"
+    suggestion_id: str | None = None
 
 
 @dataclass(frozen=True)

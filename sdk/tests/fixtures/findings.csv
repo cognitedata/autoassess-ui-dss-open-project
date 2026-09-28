@@ -1,0 +1,7 @@
+id,x,y,z,nx,ny,nz,radius,inspection_type,class,confidence,description
+corr-001,6.72,-0.16,0.17,,,,,,corrosion,0.92,Pitting on side shell
+corr-002,6.85,-0.12,0.30,,,,,,corrosion,0.84,Pitting on side shell
+crack-001,1.83,-0.85,2.12,-1,0,0,,,crack,0.81,Weld toe crack
+pit-001,7.33,-1.55,-3.00,,,,0.4,ndt_thickness,pitting,0.77,Deep pit - measure thickness
+,-3.64,0.08,1.30,,,,,,coating_breakdown,0.66,Coating breakdown on longitudinal
+corr-003,9.48,1.05,3.06,,,,,,corrosion,0.35,Possible corrosion (low confidence)

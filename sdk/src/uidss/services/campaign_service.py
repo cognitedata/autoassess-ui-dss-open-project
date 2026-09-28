@@ -1,4 +1,4 @@
-"""Campaign service — create, list, and update InspectionResult nodes."""
+"""Campaign service — create, list, and update InspectionResult nodes; download their files."""
 
 from __future__ import annotations
 
@@ -20,11 +20,14 @@ from uidss.cdf.data_model import (
     view_id,
 )
 from uidss.models import InspectionResult, ResultStatus
+from uidss.services.threed_service import model_node_id
 
 log = structlog.get_logger()
 
 _List = list  # avoid shadowing by method named `list`
 _VALID_STATUSES: frozenset[str] = frozenset({"InProgress", "Complete"})
+_CAD_MODEL_VIEW = ViewId("cdf_cdm", "CogniteCADModel", "v1")
+_PROXY_TAG_PREFIX = "collisionProxyFileId:"
 
 
 class CampaignServiceProtocol(Protocol):
@@ -41,6 +44,9 @@ class CampaignServiceProtocol(Protocol):
     ) -> None: ...
     def complete(self, space: str, external_id: str) -> None: ...
     def download_map(self, space: str, external_id: str, output_dir: Path) -> _List[Path]: ...
+    def download_collision_proxy(
+        self, campaign_external_id: str, output_dir: Path
+    ) -> Path | None: ...
 
 
 @dataclass
@@ -91,6 +97,30 @@ class CdfCampaignService:
 
         log.info("downloaded campaign map", campaign=external_id, file_count=len(written))
         return written
+
+    def download_collision_proxy(self, campaign_external_id: str, output_dir: Path) -> Path | None:
+        """Download the campaign's decimated collision-proxy PLY (built by build-3d-model).
+
+        The file id is read from the ``collisionProxyFileId:<id>`` tag of the campaign's
+        ``{campaign}-cad-model`` CogniteCADModel node. Returns ``None`` when the campaign has
+        no 3D model yet (no node, or no usable tag). Read-only.
+        """
+        response = self._client.data_modeling.instances.retrieve(
+            nodes=[(SPACE, model_node_id(campaign_external_id))],
+            sources=[_CAD_MODEL_VIEW],
+        )
+        if not response.nodes:
+            return None
+        props = getattr(response.nodes[0], "properties", {}) or {}
+        tags = (props.get(_CAD_MODEL_VIEW) or {}).get("tags") or []
+        file_id = _proxy_file_id([str(t) for t in tags])
+        if file_id is None:
+            return None
+        output_dir.mkdir(parents=True, exist_ok=True)
+        path = output_dir / f"{campaign_external_id}-collision-proxy.ply"
+        self._client.files.download_to_path(path, id=file_id)
+        log.info("downloaded collision proxy", campaign=campaign_external_id, file_id=file_id)
+        return path
 
     def create(self, area_external_id: str, campaign_date: str) -> str:
         external_id = f"result-{uuid.uuid4()}"
@@ -177,6 +207,15 @@ class CdfCampaignService:
             ]
         )
         log.info("completed campaign", external_id=external_id)
+
+
+def _proxy_file_id(tags: _List[str]) -> int | None:
+    for tag in tags:
+        if tag.startswith(_PROXY_TAG_PREFIX):
+            value = tag.removeprefix(_PROXY_TAG_PREFIX)
+            if value.isdigit():
+                return int(value)
+    return None
 
 
 def _map_node(item: object) -> InspectionResult:

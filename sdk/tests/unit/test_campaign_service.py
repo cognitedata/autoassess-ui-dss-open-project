@@ -299,3 +299,54 @@ class TestDownloadMap:
 
         assert written == []
         client.files.download_to_path.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# download_collision_proxy()
+# ---------------------------------------------------------------------------
+
+
+def _make_cad_model_node(tags: list[str]) -> MagicMock:
+    node = MagicMock()
+    node.instance_type = "node"
+    node.space = SPACE
+    node.external_id = "result-001-cad-model"
+    node.properties = Properties.load({"cdf_cdm": {"CogniteCADModel/v1": {"tags": tags}}})
+    return node
+
+
+class TestDownloadCollisionProxy:
+    def test_downloads_the_file_named_by_the_cad_model_tag(self, tmp_path: Path) -> None:
+        node = _make_cad_model_node(["autoassess", "threeDModelId:5", "collisionProxyFileId:77"])
+        client = _make_retrieve_client(node)
+
+        path = CdfCampaignService(client).download_collision_proxy("result-001", tmp_path)
+
+        assert path == tmp_path / "result-001-collision-proxy.ply"
+        client.files.download_to_path.assert_called_once_with(path, id=77)
+        [(space, external_id)] = client.data_modeling.instances.retrieve.call_args.kwargs["nodes"]
+        assert (space, external_id) == (SPACE, "result-001-cad-model")
+
+    def test_returns_none_when_the_tag_is_missing(self, tmp_path: Path) -> None:
+        client = _make_retrieve_client(_make_cad_model_node(["autoassess", "threeDModelId:5"]))
+
+        assert CdfCampaignService(client).download_collision_proxy("result-001", tmp_path) is None
+        client.files.download_to_path.assert_not_called()
+
+    def test_returns_none_when_the_tag_is_not_a_number(self, tmp_path: Path) -> None:
+        client = _make_retrieve_client(_make_cad_model_node(["collisionProxyFileId:abc"]))
+
+        assert CdfCampaignService(client).download_collision_proxy("result-001", tmp_path) is None
+
+    def test_returns_none_when_the_model_node_is_missing(self, tmp_path: Path) -> None:
+        client = _make_retrieve_client(None)
+
+        assert CdfCampaignService(client).download_collision_proxy("result-001", tmp_path) is None
+        client.files.download_to_path.assert_not_called()
+
+    def test_writes_nothing_to_cdf(self, tmp_path: Path) -> None:
+        client = _make_retrieve_client(_make_cad_model_node(["collisionProxyFileId:77"]))
+
+        CdfCampaignService(client).download_collision_proxy("result-001", tmp_path)
+
+        client.data_modeling.instances.apply.assert_not_called()

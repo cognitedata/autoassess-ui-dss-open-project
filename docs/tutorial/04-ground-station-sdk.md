@@ -3,6 +3,7 @@
 The [`sdk/`](../../sdk) project is a Python 3.12 package called `uidss`. It installs a CLI named **`dss`**. It is the robot side's only interface to CDF:
 
 - **Down:** fetch a Ready inspection plan and its reference map
+- **Plan:** turn a CSV of findings from a detection pipeline into a Draft plan
 - **Up:** push mission output (maps, structural elements, UT thickness, metrics, drone images)
 
 Prerequisite: [chapter 3](03-setup-credentials.md) done (`sdk/.env` set up, `uv run dss plan list` works). All commands below are run from `sdk/`.
@@ -11,7 +12,7 @@ Prerequisite: [chapter 3](03-setup-credentials.md) done (`sdk/.env` set up, `uv 
 
 ## Part 1: The CLI
 
-Every command is **interactive**. It walks you through vessel, then area, then plan or campaign with arrow-key pickers, and skips a picker when there's only one choice. Add `-v` for debug logging: `uv run dss -v plan list`.
+Most commands are **interactive**. They walk you through vessel, then area, then plan or campaign with arrow-key pickers, and skip a picker when there's only one choice. `plan import-findings` and `campaign build-3d-model` also take flags, so they can run unattended. Add `-v` for debug logging: `uv run dss -v plan list`.
 
 > 💡 Tip: `source .venv/bin/activate` lets you type `dss` instead of `uv run dss`.
 
@@ -55,7 +56,8 @@ Pick a plan (choose a **Ready** one; the CLI lets you pick any status). It write
       "inspectionType": "ndt_thickness",
       "position3d": [2.20, 1.09, 0.92],
       "normalVector": [0.0, -1.0, 0.0],
-      "radiusM": 0.3
+      "radiusM": 0.3,
+      "suggestionId": "finding:corr-001"  // only when the task came from a finding or suggestion
     }
   ]
 }
@@ -165,6 +167,55 @@ sensor:
 ```
 The pose at each image's timestamp is interpolated from `groundtruth.txt` (lerp for position, slerp for rotation). The camera pose is `T_WS = T_WB · T_BS`. Each image becomes a PNG `CogniteFile` (external ID `drone-image-file-{campaign}-frame-{n}`) plus a `DroneImage` node.
 
+### 1.6 Create a plan from findings (CSV)
+
+Automatic pipelines such as defect detection or change detection produce **points of interest**. `import-findings` turns a CSV of them into a **Draft** plan with one **region task** per finding:
+
+```bash
+# See what would be created; nothing is written
+uv run dss plan import-findings findings.csv --area "BWT 3P" --dry-run
+
+# Create the Draft plan
+uv run dss plan import-findings findings.csv --area "BWT 3P" --name "Corrosion run 7" --yes
+
+# Add a newer CSV to the same plan later: findings already in it are skipped
+uv run dss plan import-findings findings-v2.csv --area "BWT 3P" --plan plan-6c1e… --yes
+```
+
+**CSV format** (header names are case-insensitive; unknown columns are ignored):
+
+| Column | Required | Meaning |
+|---|---|---|
+| `x`, `y`, `z` | ✅ | Position in metres, in the **map campaign's frame** (the frame of `plan.json`) |
+| `id` | | Stable finding ID. If it's missing, a hash of the row is used. Must not contain `+` |
+| `nx`, `ny`, `nz` | | Surface normal: all three or none. Normalised on read |
+| `radius` | | Task radius in metres (default `--radius`, 0.3) |
+| `inspection_type` | | `visual` or `ndt_thickness` (default `--inspection-type`, visual) |
+| `class` | | For example `corrosion`; used by `--class` |
+| `confidence` | | 0 to 1; used by `--min-confidence`. Rows without one are kept |
+| `description` | | Free text |
+
+Only the position, normal, radius, inspection type and `suggestionId` are stored on a task (the task view has no other fields). `class`, `confidence` and `description` are for filtering and your own bookkeeping.
+
+Sample: [`sdk/tests/fixtures/findings.csv`](../../sdk/tests/fixtures/findings.csv) (its coordinates fit the tutorial's test area).
+
+```csv
+id,x,y,z,nx,ny,nz,radius,inspection_type,class,confidence,description
+corr-001,6.72,-0.16,0.17,,,,,,corrosion,0.92,Pitting on side shell
+crack-001,1.83,-0.85,2.12,-1,0,0,,,crack,0.81,Weld toe crack
+pit-001,7.33,-1.55,-3.00,,,,0.4,ndt_thickness,pitting,0.77,Deep pit - measure thickness
+```
+
+What happens:
+1. **Validate.** Each bad row is reported with its line number and skipped. `--strict` makes any bad row fatal.
+2. **Filter** with `--min-confidence 0.5` and `--class corrosion` (repeatable).
+3. **Merge** findings within `--merge-radius` (default 0.5 m, `0` turns it off) into one task. The task sits at the mean position and its radius covers every member. It is `ndt_thickness` if any member needs a thickness measurement. Findings whose normals face away from each other (two sides of a plate) are not merged.
+4. **Normals.** Rows with `nx,ny,nz` keep theirs. For the rest, `--normals model` (the default) takes the nearest surface of the map campaign's 3D model (its collision proxy, within 1 m), oriented into the tank. If there is no model yet, or no surface nearby, the normal points from the finding towards the area's centre. `--normals centre` always does that, and `--normals require` rejects rows without a normal.
+5. **Skip what's there.** Each task gets `suggestionId = finding:<id>` (`finding:<id1>+<id2>` for a merged task). With `--plan`, findings already named by a task in that plan are skipped, so re-running the same CSV adds nothing.
+6. **Write** after you confirm (`--yes` skips the question): a new Draft plan, or the existing Draft plan passed with `--plan`. The map is `--map <campaign>`, else the newest **Complete** campaign of the area (you get a picker if there are several and you didn't pass `--yes`). With `--plan`, the plan's own map is used.
+
+The command never marks the plan Ready and never changes existing tasks. Open the plan in the viewer, check the tasks sit on the findings, and mark it Ready there.
+
 ---
 
 ## Part 2: Scripting with the Python API (non-interactive)
@@ -181,8 +232,8 @@ client = UidssClient.from_env()   # reads COGNITE_* from env / ./.env
 |---|---|
 | `client.vessels` | `list()` |
 | `client.areas` | `list(vessel_space, vessel_external_id)` |
-| `client.plans` | `list(area_space, area_eid)`, `list_tasks(plan_eid)`, `count_tasks([eids])`, `download(space, eid, area_name, output_path)`, `update_status(space, eid, "Draft"\|"Ready"\|"Complete")` |
-| `client.campaigns` | `list(area_space, area_eid)`, `get(space, eid)`, `create(area_eid, "YYYY-MM-DD") -> eid`, `update_file_ids(space, eid, ply_ids, pcd_ids, pcd_labels)` ⚠️ overwrites, `complete(space, eid)`, `download_map(space, eid, out_dir)` |
+| `client.plans` | `list(area_space, area_eid)`, `list_tasks(plan_eid)`, `count_tasks([eids])`, `download(space, eid, area_name, output_path)`, `update_status(space, eid, "Draft"\|"Ready"\|"Complete")`, `create(area_eid, map_eid, name, description) -> eid` (Draft), `add_region_tasks(plan_eid, [NewRegionTask]) -> [task_eid]` |
+| `client.campaigns` | `list(area_space, area_eid)`, `get(space, eid)`, `create(area_eid, "YYYY-MM-DD") -> eid`, `update_file_ids(space, eid, ply_ids, pcd_ids, pcd_labels)` ⚠️ overwrites, `complete(space, eid)`, `download_map(space, eid, out_dir)`, `download_collision_proxy(campaign_eid, out_dir) -> Path \| None` |
 | `client.artifacts` | `upload_ply(path, area_eid) -> file_id`, `upload_pcd(path, area_eid, label) -> file_id` |
 | `client.structural_elements` | `upsert_from_ssg(area_eid, ssg_path)` |
 | `client.measurements` | `create_from_csv(path, campaign_eid)`, `missing_columns(path)` |
@@ -249,6 +300,40 @@ client.plans.update_status(plan.space, plan.external_id, "Complete")
 print("Uploaded campaign", campaign_eid)
 ```
 
+### Example: a Draft plan from a findings CSV
+
+What `dss plan import-findings` does, for a pipeline that runs without prompts. [`uidss.findings`](../../sdk/src/uidss/findings.py) is pure (no CDF calls), so you can also build the task list from your own data by creating `Finding(id=…, position=(x, y, z))` objects directly.
+
+```python
+import tempfile
+from pathlib import Path
+
+from uidss import UidssClient
+from uidss.findings import filter_findings, plan_tasks_from_findings, read_findings_csv
+from uidss.threed.ply import read_ply
+
+client = UidssClient.from_env()
+AREA_EID = "area-01581"
+MAP_EID = "result-9ab2…"                      # the Complete campaign whose frame the CSV uses
+
+findings, row_errors = read_findings_csv(Path("findings.csv"))
+for err in row_errors:
+    print(f"line {err.line}: {err.message}")
+findings = filter_findings(findings, min_confidence=0.5)
+
+with tempfile.TemporaryDirectory() as tmp:     # the 3D model's collision proxy, for normals
+    proxy = client.campaigns.download_collision_proxy(MAP_EID, Path(tmp))
+    mesh = read_ply(proxy) if proxy else None
+
+result = plan_tasks_from_findings(findings, mesh=mesh, merge_radius_m=0.5)
+print(f"{len(result.tasks)} tasks, {result.count('model')} normals from the model")
+
+plan_eid = client.plans.create(AREA_EID, MAP_EID, "Corrosion run 7", "From the detector")
+client.plans.add_region_tasks(plan_eid, [t.task for t in result.tasks])
+```
+
+To add to an existing Draft plan without duplicates, pass `existing_suggestion_ids=[t.suggestion_id for t in client.plans.list_tasks(plan_eid) if t.suggestion_id]` to `plan_tasks_from_findings`.
+
 Other readable examples in the repo:
 - [`scripts/seed-simulated.py`](../../scripts/seed-simulated.py): minimal create-campaign-and-upload-PLY
 - [`sdk/tests/integration/test_plan_roundtrip.py`](../../sdk/tests/integration/test_plan_roundtrip.py): plan round trip against real CDF
@@ -270,7 +355,7 @@ just fix         # auto-fix lint/format
 just test-all    # + integration tests against real CDF (needs .env)
 just coverage
 ```
-✅ `just test` runs with no network access. At the time of writing, ~218 tests pass and 2 fail in `tests/unit/test_vessel_area_service.py`. Those two are known and unrelated to your changes.
+✅ `just test` runs with no network access. At the time of writing, ~376 tests pass and 2 fail in `tests/unit/test_vessel_area_service.py`. Those two are known and unrelated to your changes.
 
 Where to add things:
 - New CLI command: [`sdk/src/uidss/cli/main.py`](../../sdk/src/uidss/cli/main.py) (Typer), prompts in `cli/selectors.py`
