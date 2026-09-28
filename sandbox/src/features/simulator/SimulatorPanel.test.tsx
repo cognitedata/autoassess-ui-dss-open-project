@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { PlanJson } from '../../domain/planJson';
 import { flyAllTasks } from '../../__mocks__/missions';
+import { plannerResult } from '../../__mocks__/planner';
 import type { InspectionPlan } from '../../domain/types';
 import type { MissionResult } from '../../sim/simulator';
 import { FlightRecorder } from '../../sim/simulator';
@@ -58,7 +59,83 @@ describe(SimulatorPanel.name, () => {
     expect(screen.getByTestId('mission-summary')).toHaveTextContent('Tasks inspected1 / 2');
     expect(within(screen.getByTestId('mission-summary')).getByText(/outside the area bounds/)).toBeInTheDocument();
   });
+
+  it('should point at the gbplanner examples when there is no mission', () => {
+    renderPanel(null);
+
+    expect(screen.getByText('5. gbplanner: explore + inspect')).toBeInTheDocument();
+    expect(screen.getByText('6. gbplanner: target reach per task')).toBeInTheDocument();
+  });
+
+  it('should not show planner controls for a flight without a planner', () => {
+    renderPanel(mission());
+
+    expect(screen.queryByTestId('planner-status')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group', { name: 'Planner layers' })).not.toBeInTheDocument();
+  });
+
+  it('should show the planner status strip at the playback time', () => {
+    renderPanel(withPlanner());
+
+    fireEvent.change(screen.getByRole('slider', { name: 'Mission time' }), { target: { value: '2' } });
+
+    const strip = screen.getByTestId('planner-status');
+    expect(strip).toHaveTextContent('gbplanner · bwt_inspection');
+    expect(strip).toHaveTextContent('Exploring');
+    expect(strip).toHaveTextContent('Iteration 1');
+    expect(strip).toHaveTextContent('Explored 30%');
+    expect(strip).toHaveTextContent('Coverage 10%');
+    expect(strip).toHaveTextContent('Time left 98 s');
+    expect(strip).toHaveTextContent('Compartment 1/2');
+    expect(strip).toHaveTextContent('Covered 1 / 2');
+  });
+
+  it('should hide the compartment counter when the flow did not sequence compartments', () => {
+    const single = withPlanner();
+    single.planner!.progress = single.planner!.progress.map((p) => ({ ...p, compartment: 1, compartments: 1 }));
+    renderPanel(single);
+
+    fireEvent.change(screen.getByRole('slider', { name: 'Mission time' }), { target: { value: '2' } });
+
+    expect(screen.getByTestId('planner-status')).not.toHaveTextContent('Compartment');
+  });
+
+  it('should toggle planner layers and list them in the legend', () => {
+    renderPanel(withPlanner());
+
+    const layers = screen.getByRole('group', { name: 'Planner layers' });
+    const graph = within(layers).getByRole('checkbox', { name: 'Graph' });
+    fireEvent.click(graph);
+
+    expect(graph).not.toBeChecked();
+    expect(within(layers).getByRole('checkbox', { name: 'Map' })).toBeChecked();
+    const legend = screen.getByRole('list', { name: 'Legend' });
+    expect(legend).toHaveTextContent('Mapped structure');
+    expect(legend).toHaveTextContent('Inspection viewpoint');
+    expect(legend).toHaveTextContent('Covered by camera');
+  });
+
+  it('should count tasks covered by the planner camera in the summary', () => {
+    renderPanel(withPlanner());
+
+    fireEvent.change(screen.getByRole('slider', { name: 'Mission time' }), { target: { value: '1000' } });
+
+    expect(screen.getByTestId('mission-summary')).toHaveTextContent('Covered by camera1 / 2');
+  });
+
+  it('should not report a task the planner camera covered as skipped', () => {
+    renderPanel({ ...mission(), planner: plannerResult({ coveredTasks: { out: 2 } }) });
+
+    fireEvent.change(screen.getByRole('slider', { name: 'Mission time' }), { target: { value: '1000' } });
+
+    expect(screen.getByTestId('mission-summary')).toHaveTextContent('Skipped0');
+    expect(within(screen.getByTestId('mission-summary')).queryByText(/outside the area bounds/)).not.toBeInTheDocument();
+  });
 });
+
+function withPlanner(): MissionResult {
+  return { ...mission(), planner: plannerResult({ coveredTasks: { in: 1.5 } }) };
+}
 
 const PLAN: PlanJson = {
   planExternalId: 'p',

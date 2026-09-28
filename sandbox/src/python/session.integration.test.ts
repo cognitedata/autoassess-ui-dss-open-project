@@ -425,6 +425,338 @@ describe('PythonSession (real Pyodide)', () => {
     expect(stdout).toContain('Mission demo-plan-followup: 8/8 tasks inspected');
   });
 
+  describe('simulated gbplanner (dss_sandbox.gbplanner)', () => {
+    const SETUP = [
+      'from uidss import UidssClient',
+      'from dss_sandbox import SimDrone, Pose',
+      'from dss_sandbox.gbplanner import SimGbPlanner',
+      'UidssClient.from_env().plans.download("autoassess", "demo-plan-followup", "BWT 3P", "p.json")',
+      'sim_drone = SimDrone(speed_mps=1.0, max_flight_time_s=1800)',
+      'sim_drone.load_plan("p.json")',
+    ].join('\n');
+
+    it('should build ROS-shaped messages with gbplanner field names and defaults', async () => {
+      const { stdout, outcome } = await run(
+        session,
+        [
+          'from dss_sandbox.gbplanner import geometry_msgs, nav_msgs, planner_msgs, std_msgs, std_srvs',
+          'print(geometry_msgs.PoseStamped())',
+          'print(nav_msgs.Path().poses, std_msgs.Bool().data)',
+          'print(planner_msgs.planner_set_global_bound.Request())',
+          'print(planner_msgs.PlannerStatus().trigger_mode.kAuto, planner_msgs.ExecutionPathMode.kHomingPath)',
+          'print(std_srvs.Trigger.Response(), std_srvs.TriggerRequest is std_srvs.Trigger.Request)',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain(
+        "PoseStamped(header=Header(seq=0, stamp=0.0, frame_id=''), pose=Pose(position=Point(x=0.0, y=0.0, z=0.0), orientation=Quaternion(x=0.0, y=0.0, z=0.0, w=1.0)))",
+      );
+      expect(stdout).toContain('[] False');
+      expect(stdout).toContain(
+        'Request(get_current_bound=False, reset_to_default=False, bound=PlanningBound(use_z_val=False, min_val=Point(x=0.0, y=0.0, z=0.0), max_val=Point(x=0.0, y=0.0, z=0.0)))',
+      );
+      expect(stdout).toContain('1 1');
+      expect(stdout).toContain("Response(success=False, message='') True");
+    });
+
+    it('should round-trip a sandbox Pose through a quaternion, with ROS pitch = -sandbox pitch', async () => {
+      const { stdout, outcome } = await run(
+        session,
+        [
+          'from dss_sandbox import Pose',
+          'from dss_sandbox.gbplanner import euler_from_quaternion, quaternion_from_euler, to_pose_stamped, to_sandbox_pose',
+          'p = Pose(1.0, 2.0, 3.0, roll=0.1, pitch=0.3, yaw=-2.0)',
+          'msg = to_pose_stamped(p, stamp=4.5)',
+          'q = msg.pose.orientation',
+          'print("frame", msg.header.frame_id, msg.header.stamp)',
+          'print("ros", [round(a, 6) for a in euler_from_quaternion(q)])',
+          'back = to_sandbox_pose(msg)',
+          'print("back", [round(v, 6) for v in (back.x, back.y, back.z, back.roll, back.pitch, back.yaw)])',
+          'yaw90 = quaternion_from_euler(0, 0, 1.5707963267948966)',
+          'print("yaw90", round(yaw90.z, 6), round(yaw90.w, 6))',
+          'down = to_pose_stamped(Pose(0, 0, 0, pitch=-0.5)).pose.orientation',
+          'print("nose-down ros pitch", round(euler_from_quaternion(down)[1], 6))',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('frame world 4.5');
+      expect(stdout).toContain('ros [0.1, -0.3, -2.0]');
+      expect(stdout).toContain('back [1.0, 2.0, 3.0, 0.1, 0.3, -2.0]');
+      expect(stdout).toContain('yaw90 0.707107 0.707107');
+      expect(stdout).toContain('nose-down ros pitch 0.5');
+    });
+
+    it('should raise ValueError listing the supported names for an unknown service or topic', async () => {
+      const { stdout, outcome } = await run(
+        session,
+        [
+          SETUP,
+          'sim_gbplanner = SimGbPlanner(sim_drone, verbose=False)',
+          'for fn in (lambda: sim_gbplanner.ros.call("gbplanner/explore"), lambda: sim_gbplanner.ros.subscribe("/octomap", print)):',
+          '    try:',
+          '        fn()',
+          '    except ValueError as err:',
+          '        print("ValueError:", err)',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain("ValueError: Unknown service 'gbplanner/explore'. Supported services: pci_initialization_trigger, ");
+      expect(stdout).toContain('planner_control_interface/std_srvs/automatic_planning');
+      expect(stdout).toContain('gbplanner/set_global_bound');
+      expect(stdout).toContain("ValueError: Unknown topic '/octomap'. Topics you can subscribe to: /gbplanner_path, /robot_status");
+    });
+
+    it('should raise TypeError for a request of the wrong type', async () => {
+      const { outcome } = await run(
+        session,
+        [
+          SETUP,
+          'from dss_sandbox.gbplanner import std_srvs',
+          'SimGbPlanner(sim_drone).ros.call("gbplanner/set_global_bound", std_srvs.SetBool.Request(data=True))',
+        ].join('\n'),
+      );
+
+      expect(outcome.error).toContain('TypeError: gbplanner/set_global_bound expects planner_set_global_bound.Request, got Request');
+    });
+
+    it('should stop planning on a std_msgs/Bool on planner_control_interface/stop_request', async () => {
+      const { stdout, outcome } = await run(
+        session,
+        [
+          SETUP,
+          'from dss_sandbox.gbplanner import std_msgs',
+          'sim_gbplanner = SimGbPlanner(sim_drone, verbose=False)',
+          'ros = sim_gbplanner.ros',
+          'ros.call("pci_initialization_trigger")',
+          'ros.call("planner_control_interface/std_srvs/automatic_planning")',
+          'ros.publish("planner_control_interface/stop_request", std_msgs.Bool(data=True))',
+          'ros.spin()',
+          'print("after stop", sim_gbplanner.mode, sim_gbplanner.report().iterations)',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('after stop idle 0');
+    });
+
+    it('should need a plan loaded (the area) before creating the planner', async () => {
+      const { outcome } = await run(
+        session,
+        'from dss_sandbox import SimDrone\nfrom dss_sandbox.gbplanner import SimGbPlanner\nSimGbPlanner(SimDrone())',
+      );
+
+      expect(outcome.error).toContain('RuntimeError: SimGbPlanner needs the area: call sim_drone.load_plan(plan) first');
+    });
+
+    it('should call a /gbplanner_path subscriber once per planning iteration', async () => {
+      const { stdout, outcome, missions } = await run(
+        session,
+        [
+          SETUP,
+          'sim_gbplanner = SimGbPlanner(sim_drone, config="cave_exploration", verbose=False)',
+          'paths = []',
+          'sim_gbplanner.ros.subscribe("/gbplanner_path", paths.append)',
+          'print("init", sim_gbplanner.ros.call("pci_initialization_trigger").success, sim_drone.state)',
+          'for _ in range(3):',
+          '    sim_gbplanner.ros.call("planner_control_interface/std_srvs/single_planning")',
+          '    sim_gbplanner.ros.spin()',
+          'r = sim_gbplanner.report()',
+          'print("count", len(paths), r.iterations)',
+          'print("seq", [p.header.seq for p in paths])',
+          'print("types", type(paths[0]).__name__, type(paths[0].poses[0]).__name__, paths[0].header.frame_id)',
+          'print("mode", sim_gbplanner.mode)',
+          'st = sim_gbplanner.status()',
+          'print("status", type(st).__name__, st.trigger_mode.mode, st.max_vel, st.header.stamp == sim_drone.flight_time_s)',
+          'statuses = []',
+          'sim_gbplanner.ros.subscribe("robot_status", statuses.append)',
+          'sim_gbplanner.ros.call("planner_control_interface/std_srvs/single_planning")',
+          'sim_gbplanner.ros.spin()',
+          'print("robot_status", type(statuses[-1]).__name__, 0 < statuses[-1].time_remaining < 1800)',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('init True flying');
+      expect(stdout).toContain('count 3 3');
+      expect(stdout).toContain('seq [1, 2, 3]');
+      expect(stdout).toContain('types Path PoseStamped world');
+      expect(stdout).toContain('mode idle');
+      expect(stdout).toContain('status PlannerStatus 0 1.0 True');
+      expect(stdout).toContain('robot_status RobotStatus True');
+      expect(missions.at(-1)?.planner?.timeline).toHaveLength(4);
+    });
+
+    it('should run example 5 (explore + inspect) one compartment at a time, cover the demo tasks and land, well inside the run timeout', async () => {
+      const started = performance.now();
+      const { stdout, outcome, missions } = await run(session, example('gb-explore'));
+      const elapsedMs = performance.now() - started;
+      console.info(`example 5 in Pyodide: ${elapsedMs.toFixed(0)} ms`);
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('set_global_bound: True');
+      expect(stdout).toMatch(/path t=\s*\d+\.\ds\s+\d+ poses/);
+      const covered = Number(/plan tasks covered by the inspection camera: (\d+)\/8/.exec(stdout)?.[1]);
+      expect(covered).toBeGreaterThanOrEqual(6);
+      // The BWT flow works the demo tank's 5 compartments in turn, passing the manholes.
+      expect(stdout).toContain('[gbplanner] Compartments: 5');
+      expect(stdout).toMatch(/passing the manhole at .* to compartment 2\/5/);
+      expect(stdout).toMatch(/Compartment 5\/5/);
+      // The report prints per-compartment exploration and coverage.
+      const perCompartment = stdout.match(/compartment \d \(x [-\d. –]+\): explored \d+%, coverage \d+%/g) ?? [];
+      expect(perCompartment).toHaveLength(5);
+      for (const line of perCompartment) {
+        expect(Number(/coverage (\d+)%/.exec(line)?.[1])).toBeGreaterThanOrEqual(60);
+      }
+      const mission = missions.at(-1);
+      expect(mission).toMatchObject({ status: 'landed', planExternalId: 'demo-plan-followup' });
+      expect(mission?.planner?.viewpoints.length).toBeGreaterThan(0);
+      expect(Object.keys(mission?.planner?.coveredTasks ?? {})).toHaveLength(covered);
+      expect(mission?.planner?.progress.at(-1)).toMatchObject({ compartments: 5 });
+      expect(elapsedMs).toBeLessThan(7_000);
+    });
+
+    it('should run example 6 (target reach per task) and inspect the tasks', async () => {
+      const { stdout, outcome, missions } = await run(session, example('gb-target-reach'));
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout.match(/^inspected demo-plan-followup-task-\d+/gm)?.length ?? 0).toBeGreaterThanOrEqual(5);
+      expect(missions.at(-1)).toMatchObject({ status: 'landed', planExternalId: 'demo-plan-followup' });
+      expect(missions.at(-1)?.summary.visited).toBeGreaterThanOrEqual(5);
+    });
+  });
+
+  describe('simulated autoassess_bridge (/autoassess/* on sim_gbplanner.ros)', () => {
+    const SETUP = [
+      'import json',
+      'from uidss import UidssClient',
+      'from dss_sandbox import SimDrone',
+      'from dss_sandbox.gbplanner import SimGbPlanner, std_msgs',
+      'UidssClient.from_env().plans.download("autoassess", "demo-plan-followup", "BWT 3P", "p.json")',
+      'sim_drone = SimDrone(speed_mps=1.0, max_flight_time_s=1800)',
+      'sim_drone.load_plan("p.json")',
+      'sim_gbplanner = SimGbPlanner(sim_drone, verbose=False)',
+      'ros = sim_gbplanner.ros',
+    ].join('\n');
+
+    it('should run example 7 (bridge: plans in, findings out) end to end', async () => {
+      const { stdout, outcome, missions } = await run(session, example('bridge'));
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('plan_id: demo-plan-followup');
+      expect(stdout).toMatch(/bridge plan: .* — 8 tasks, 8 inspection target poses, upload idle/);
+      expect(stdout).toContain('[autoassess_bridge] skipping finding: entry 1: z is missing');
+      expect(stdout).toContain('upload_status: idle -> exporting_mesh -> uploading -> complete');
+      expect(stdout).toContain('simulated: 2 defect detections created on the campaign (not written to CDF)');
+      expect(stdout).toContain('defects: 2 created: defect-corr-001, defect-crack-002');
+      expect(missions.at(-1)).toMatchObject({ status: 'landed', summary: { visited: 8 } });
+    });
+
+    it('should serve the latched plan topics with the real bridge message shapes', async () => {
+      const { stdout, outcome } = await run(
+        session,
+        [
+          SETUP,
+          'plans, ids, targets, statuses = [], [], [], []',
+          'ros.subscribe("/autoassess/plan", plans.append)',
+          'ros.subscribe("autoassess/plan_id", ids.append)  # leading slash optional, as in ROS',
+          'ros.subscribe("/autoassess/inspection_targets", targets.append)',
+          'ros.subscribe("/autoassess/upload_status", statuses.append)',
+          'print("types", type(plans[0]).__name__, type(ids[0]).__name__, type(targets[0]).__name__)',
+          'plan = json.loads(plans[0].data)',
+          'print("plan", plan["planExternalId"], len(plan["tasks"]), ids[0].data)',
+          'print("targets", len(targets[0].poses), targets[0].header.frame_id)',
+          'print("status", json.loads(statuses[0].data)["state"], json.loads(statuses[0].data)["findings"])',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('types String String PoseArray');
+      expect(stdout).toContain('plan demo-plan-followup 8 demo-plan-followup');
+      expect(stdout).toContain('targets 8 world');
+      expect(stdout).toContain('status idle None');
+    });
+
+    it('should validate findings with the real bridge rules: bad entries skipped and logged, ids deduped', async () => {
+      const { stdout, outcome } = await run(
+        session,
+        [
+          SETUP,
+          'statuses = []',
+          'ros.subscribe("/autoassess/upload_status", lambda m: statuses.append(json.loads(m.data)))',
+          'ros.publish("/autoassess/findings", {"id": "a", "x": 1.0, "y": 0.0, "z": 1.0})',
+          'ros.publish("/autoassess/findings", {"id": "a", "x": 9.0, "y": 9.0, "z": 9.0})  # dup: first wins',
+          'ros.publish("/autoassess/findings", std_msgs.String(data="not json"))',
+          'ros.publish("/autoassess/findings", [',
+          '    {"id": "b+c", "x": 1, "y": 1, "z": 1},',
+          '    {"id": "c", "x": 1, "y": 1, "z": 1, "nx": 0.0, "ny": 0.0},',
+          '    {"id": "d", "x": 1, "y": 1, "z": 1, "radius": -1},',
+          '    {"id": "e", "x": 1, "y": 1, "z": 1, "confidence": 2},',
+          '    {"id": "f", "x": 1, "y": 1, "z": 1, "inspection_type": "sonar"},',
+          '    {"id": "g", "x": float("nan"), "y": 1, "z": 1},',
+          '    {"id": "ok-2", "x": 2.0, "y": 0.5, "z": 1.0, "inspection_type": "ndt_thickness"},',
+          '])',
+          'try:',
+          '    ros.publish("/autoassess/findings", 42)',
+          'except TypeError as err:',
+          '    print("TypeError:", err)',
+          'sim_drone.takeoff()',
+          'sim_drone.return_home()',
+          'sim_drone.land()',
+          'print("final", statuses[-1]["state"], statuses[-1]["findings"])',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('[autoassess_bridge] skipping finding: not JSON:');
+      expect(stdout).toContain("entry 0: id 'b+c' must not contain '+'");
+      expect(stdout).toContain('entry 1: nx, ny and nz must all be set or all be missing');
+      expect(stdout).toContain('entry 2: radius must be a positive number of metres, got -1');
+      expect(stdout).toContain('entry 3: confidence must be between 0 and 1, got 2');
+      expect(stdout).toContain("entry 4: inspection_type must be visual or ndt_thickness, got 'sonar'");
+      expect(stdout).toContain('entry 5: x nan is not a finite number');
+      expect(stdout).toContain('TypeError:');
+      expect(stdout).toContain(
+        "final complete {'count': 2, 'defectExternalIds': ['defect-a', 'defect-ok-2']}",
+      );
+    });
+
+    it('should answer the upload_mission service and start a new mission on the next take-off', async () => {
+      const { stdout, outcome } = await run(
+        session,
+        [
+          SETUP,
+          'states = []',
+          'ros.subscribe("/autoassess/upload_status", lambda m: states.append(json.loads(m.data)))',
+          'ros.publish("/autoassess/findings", {"id": "m1", "x": 1.0, "y": 0.0, "z": 1.0})',
+          'resp = ros.call("autoassess_bridge/upload_mission")',
+          'print("resp", resp.success, resp.message)',
+          '# Each flight is its own mission: the next landing ends mission-002 (no findings).',
+          'sim_drone.load_plan("p.json")  # a landed flight needs the plan loaded again',
+          'sim_drone.takeoff()',
+          'sim_drone.return_home()',
+          'sim_drone.land()',
+          'print("missions", [s["missionId"] for s in states if s["state"] == "complete"])',
+          'print("no findings", states[-1]["findings"])',
+          'sim_drone.load_plan("p.json")',
+          'sim_drone.takeoff()',
+          'ros.publish("/autoassess/findings", {"id": "m2", "x": 1.0, "y": 0.5, "z": 1.0})',
+          'sim_drone.return_home()',
+          'sim_drone.land()',
+          'print("mission 3", states[-1]["missionId"], states[-1]["findings"])',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('resp True Simulated upload of mission-001: campaign result-sim-mission-001, 1 defect detection(s)');
+      expect(stdout).toContain("missions ['mission-001', 'mission-002']");
+      expect(stdout).toContain('no findings None');
+      expect(stdout).toContain("mission 3 mission-003 {'count': 1, 'defectExternalIds': ['defect-m2']}");
+    });
+  });
+
   describe('with real-project quirks: a newer empty Ready plan and an unnamed plan', () => {
     let quirkySession: PythonSession;
     let quirky: SandboxSnapshot;

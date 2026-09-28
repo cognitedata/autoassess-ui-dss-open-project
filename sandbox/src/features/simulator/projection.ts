@@ -36,12 +36,21 @@ export function createProjection(
   };
 }
 
-/** Everything worth showing for a mission: area bounds, home, targets and waypoints. */
+/** Everything worth showing for a mission: area bounds, home, targets, waypoints and the planner map. */
 export function missionViewBounds(mission: MissionResult): Bounds {
   const points: Vec3[] = [mission.home];
   for (const t of mission.tasks) {
     if (t.target) points.push(t.target);
     if (t.waypoint) points.push(t.waypoint);
   }
-  return unionBounds(mission.bounds, boundsAround(points, 0.5)) ?? { min: [-1, -1, -1], max: [1, 1, 1] };
+  const map = mission.planner?.map;
+  const mapBox: Bounds | null = map
+    ? {
+        min: [map.origin[0], map.origin[1], map.origin[2]],
+        max: [0, 1, 2].map((a) => map.origin[a] + map.dims[a] * map.resolution) as Vec3,
+      }
+    : null;
+  return (
+    unionBounds(unionBounds(mission.bounds, mapBox), boundsAround(points, 0.5)) ?? { min: [-1, -1, -1], max: [1, 1, 1] }
+  );
 }

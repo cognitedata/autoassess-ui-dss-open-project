@@ -18,6 +18,7 @@ const STATE_LABELS: Record<TaskState, string> = {
   inspecting: 'inspecting',
   inspected: 'inspected',
   skipped: 'skipped',
+  covered: 'covered',
 };
 
 const PLAN_STATUS_TONE: Record<InspectionPlan['status'], string> = {
@@ -68,16 +69,33 @@ export function TaskListPanel({ mission, sample, plan }: TaskListPanelProps) {
         <p className="muted small">This plan has no tasks.</p>
       ) : (
         <ol aria-label="Plan tasks" ref={listRef}>
-          {mission.tasks.map((task) => (
-            <TaskRow key={task.id} task={task} state={taskStateAt(task, sample)} shortId={shortId(task.id, mission.planExternalId)} />
-          ))}
+          {mission.tasks.map((task) => {
+            const coveredAt = mission.planner?.coveredTasks[task.id];
+            return (
+              <TaskRow
+                key={task.id}
+                task={task}
+                state={taskStateAt(task, sample, coveredAt)}
+                coveredAt={coveredAt}
+                shortId={shortId(task.id, mission.planExternalId)}
+              />
+            );
+          })}
         </ol>
       )}
     </div>
   );
 }
 
-function TaskRow({ task, state, shortId }: { task: MissionTaskResult; state: TaskState; shortId: string }) {
+interface TaskRowProps {
+  task: MissionTaskResult;
+  state: TaskState;
+  /** When the simulated gbplanner's inspection camera covered the task. */
+  coveredAt: number | undefined;
+  shortId: string;
+}
+
+function TaskRow({ task, state, coveredAt, shortId }: TaskRowProps) {
   const active = state === 'en-route' || state === 'inspecting';
   return (
     <li className={`task-row task-${state}`} aria-current={active ? 'true' : undefined} title={task.id}>
@@ -89,6 +107,9 @@ function TaskRow({ task, state, shortId }: { task: MissionTaskResult; state: Tas
         {STATE_LABELS[state]}
         {state === 'inspected' && task.visitedAt !== undefined && (
           <span className="mono muted"> at {task.visitedAt.toFixed(1)} s</span>
+        )}
+        {state === 'covered' && coveredAt !== undefined && (
+          <span className="mono muted" title="Seen by the planner's inspection camera"> at {coveredAt.toFixed(1)} s</span>
         )}
         {state === 'skipped' && task.skipReason && <span className="task-reason"> ({task.skipReason})</span>}
       </span>

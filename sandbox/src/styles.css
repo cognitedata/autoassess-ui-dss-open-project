@@ -415,6 +415,44 @@ select {
   width: 14px;
 }
 
+.swatch-ring {
+  box-sizing: border-box;
+  border: 2px solid;
+  border-radius: 50%;
+}
+
+.planner-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #f5f3ff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.planner-status-title {
+  font-weight: 600;
+}
+
+.layer-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 12px;
+}
+
+.layer-toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
 .playback-controls {
   display: flex;
   flex-wrap: wrap;
@@ -582,6 +620,10 @@ select {
 
 .task-skipped .task-state {
   color: #dc2626;
+}
+
+.task-covered .task-state {
+  color: #0d9488;
 }
 
 .task-reason {

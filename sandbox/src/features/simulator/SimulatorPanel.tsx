@@ -4,12 +4,15 @@ import type { InspectionPlan, StructuralElement } from '../../domain/types';
 import type { MissionSample } from '../../sim/playback';
 import { distanceAt } from '../../sim/playback';
 import type { MissionResult } from '../../sim/simulator';
+import type { PlannerLayer, PlannerLayers } from './drawScene';
 import { SCENE_COLORS } from './drawScene';
 import { SIDE_VIEW, TOP_VIEW } from './projection';
 import { SimulatorCanvas } from './SimulatorCanvas';
 import { TaskListPanel } from './TaskListPanel';
 import type { PlaybackSpeed } from './useMissionPlaybackViewModel';
 import { PLAYBACK_SPEEDS, useMissionPlaybackViewModel } from './useMissionPlaybackViewModel';
+import type { PlannerStatusView } from './usePlannerOverlayViewModel';
+import { PLANNER_LAYER_LABELS, usePlannerOverlayViewModel } from './usePlannerOverlayViewModel';
 
 export interface SimulatorPanelProps {
   mission: MissionResult | null;
@@ -37,6 +40,7 @@ const UNFINISHED_LABELS: Record<Exclude<MissionResult['status'], 'landed'>, stri
 
 export function SimulatorPanel({ mission, missionId, elements, plans }: SimulatorPanelProps) {
   const vm = useMissionPlaybackViewModel(mission, missionId);
+  const planner = usePlannerOverlayViewModel(mission, vm.sample);
   const areaElements = useMemo(
     () => (mission ? elements.filter((e) => e.areaExternalId === mission.areaExternalId) : []),
     [elements, mission],
@@ -44,6 +48,11 @@ export function SimulatorPanel({ mission, missionId, elements, plans }: Simulato
   const plan = useMemo(
     () => (mission ? (plans.find((p) => p.externalId === mission.planExternalId) ?? null) : null),
     [plans, mission],
+  );
+  // A task the planner's camera covered is not reported as skipped, even if never inspect()ed.
+  const skippedTasks = useMemo(
+    () => (mission?.tasks ?? []).filter((t) => t.status === 'skipped' && !(t.id in (mission?.planner?.coveredTasks ?? {}))),
+    [mission],
   );
 
   if (!mission || !vm.sample) {
@@ -58,6 +67,11 @@ export function SimulatorPanel({ mission, missionId, elements, plans }: Simulato
             Run <strong>3. Fly the mission</strong> or <strong>4. Hand-fly with poses</strong>, or in your own
             script: <code>from dss_sandbox import SimDrone</code>, <code>sim_drone = SimDrone()</code>,{' '}
             <code>sim_drone.fly_plan(plan)</code>. Every step of the simulated drone is animated here.
+          </p>
+          <p>
+            To let the simulated gbplanner explore and inspect the tank, run{' '}
+            <strong>5. gbplanner: explore + inspect</strong> or <strong>6. gbplanner: target reach per task</strong>:
+            its map, graph and inspection viewpoints are drawn over the flight.
           </p>
         </div>
       </section>
@@ -85,9 +99,28 @@ export function SimulatorPanel({ mission, missionId, elements, plans }: Simulato
         {mission.options.maxFlightTimeS} s
       </p>
 
-      <SimulatorCanvas title="Top view (x–y)" axes={TOP_VIEW} mission={mission} sample={sample} elements={areaElements} height={210} />
-      <SimulatorCanvas title="Side view (x–z)" axes={SIDE_VIEW} mission={mission} sample={sample} elements={areaElements} height={150} />
-      <Legend />
+      {planner.status && <PlannerStatusStrip config={mission.planner?.config ?? ''} status={planner.status} />}
+
+      <SimulatorCanvas
+        title="Top view (x–y)"
+        axes={TOP_VIEW}
+        mission={mission}
+        sample={sample}
+        elements={areaElements}
+        height={210}
+        overlay={planner.overlay?.top}
+      />
+      <SimulatorCanvas
+        title="Side view (x–z)"
+        axes={SIDE_VIEW}
+        mission={mission}
+        sample={sample}
+        elements={areaElements}
+        height={150}
+        overlay={planner.overlay?.side}
+      />
+      {planner.status && <LayerToggles layers={planner.layers} onToggle={planner.toggleLayer} />}
+      <Legend withPlanner={planner.status !== null} />
 
       <div className="playback-controls">
         <button type="button" className="btn btn-small" onClick={vm.togglePlay}>
@@ -131,6 +164,14 @@ export function SimulatorPanel({ mission, missionId, elements, plans }: Simulato
             <dd>
               {visitedNow} / {summary.tasksTotal}
             </dd>
+            {planner.status && (
+              <>
+                <dt>Covered by camera</dt>
+                <dd>
+                  {planner.status.coveredTasks} / {planner.status.tasksTotal}
+                </dd>
+              </>
+            )}
             <dt>Distance</dt>
             <dd>{distanceAt(mission, sample.t).toFixed(1)} m</dd>
             <dt>Simulated time</dt>
@@ -138,19 +179,17 @@ export function SimulatorPanel({ mission, missionId, elements, plans }: Simulato
             {landed && (
               <>
                 <dt>Skipped</dt>
-                <dd>{summary.skipped}</dd>
+                <dd>{skippedTasks.length}</dd>
               </>
             )}
           </dl>
-          {landed && summary.skipped > 0 && (
+          {landed && skippedTasks.length > 0 && (
             <ul className="skipped-list">
-              {mission.tasks
-                .filter((t) => t.status === 'skipped')
-                .map((t) => (
-                  <li key={t.id}>
-                    <span className="mono">{t.id}</span>: {t.skipReason}
-                  </li>
-                ))}
+              {skippedTasks.map((t) => (
+                <li key={t.id}>
+                  <span className="mono">{t.id}</span>: {t.skipReason}
+                </li>
+              ))}
             </ul>
           )}
         </div>
@@ -180,20 +219,68 @@ function MissionLog({ events }: { events: MissionSample['events'] }) {
   );
 }
 
-function Legend() {
-  const items: Array<[string, string, 'dot' | 'square' | 'line']> = [
+function PlannerStatusStrip({ config, status }: { config: string; status: PlannerStatusView }) {
+  return (
+    <div className="planner-status" data-testid="planner-status" aria-label="Planner status">
+      <span className="planner-status-title">gbplanner · {config}</span>
+      <span className="pill pill-live">{status.modeLabel}</span>
+      <span>Iteration {status.iteration}</span>
+      <span>Explored {status.exploredPct.toFixed(0)}%</span>
+      <span>Coverage {status.coveragePct.toFixed(0)}%</span>
+      <span>Time left {status.timeRemainingS.toFixed(0)} s</span>
+      {status.compartments > 1 && (
+        <span>
+          Compartment {status.compartment}/{status.compartments}
+        </span>
+      )}
+      <span>
+        Covered {status.coveredTasks} / {status.tasksTotal}
+      </span>
+    </div>
+  );
+}
+
+function LayerToggles({ layers, onToggle }: { layers: PlannerLayers; onToggle: (layer: PlannerLayer) => void }) {
+  const ids = Object.keys(PLANNER_LAYER_LABELS) as PlannerLayer[];
+  return (
+    <div className="layer-toggles" role="group" aria-label="Planner layers">
+      <span className="muted small">Planner layers</span>
+      {ids.map((id) => (
+        <label key={id}>
+          <input type="checkbox" checked={layers[id]} onChange={() => onToggle(id)} />
+          {PLANNER_LAYER_LABELS[id]}
+        </label>
+      ))}
+    </div>
+  );
+}
+
+function Legend({ withPlanner }: { withPlanner: boolean }) {
+  const items: ReadonlyArray<readonly [string, string, 'dot' | 'square' | 'line' | 'ring']> = [
     ['Region task', SCENE_COLORS.pending, 'dot'],
     ['Element task', SCENE_COLORS.pending, 'square'],
     ['Inspected', SCENE_COLORS.visited, 'dot'],
     ['Skipped', SCENE_COLORS.skipped, 'dot'],
     ['Drone path', SCENE_COLORS.flownPath, 'line'],
     ['Structural element', SCENE_COLORS.element, 'square'],
+    ...(withPlanner
+      ? ([
+          ['Covered by camera', SCENE_COLORS.covered, 'dot'],
+          ['Explored free space', SCENE_COLORS.mapFree, 'square'],
+          ['Mapped structure', SCENE_COLORS.mapOccupied, 'square'],
+          ['Inspected surface', SCENE_COLORS.mapInspected, 'square'],
+          ['RRG graph', SCENE_COLORS.graph, 'line'],
+          ['Best path', SCENE_COLORS.bestPath, 'line'],
+          ['Camera view', SCENE_COLORS.camera, 'square'],
+          ['Inspection viewpoint', SCENE_COLORS.viewpoint, 'ring'],
+        ] as const)
+      : []),
   ];
   return (
     <ul className="legend" aria-label="Legend">
       {items.map(([label, color, shape]) => (
         <li key={label}>
-          <span className={`swatch swatch-${shape}`} style={{ background: color }} />
+          <span className={`swatch swatch-${shape}`} style={shape === 'ring' ? { borderColor: color } : { background: color }} />
           {label}
         </li>
       ))}

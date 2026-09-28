@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { StructuralElement } from '../../domain/types';
 import type { MissionSample } from '../../sim/playback';
 import type { MissionResult } from '../../sim/simulator';
+import type { PlannerOverlay } from './drawScene';
 import { drawScene } from './drawScene';
 import type { ViewAxes } from './projection';
 
@@ -13,9 +14,11 @@ export interface SimulatorCanvasProps {
   sample: MissionSample;
   elements: readonly StructuralElement[];
   height: number;
+  /** The simulated gbplanner's layers for this view, when a planner flew the mission. */
+  overlay?: PlannerOverlay | null;
 }
 
-export function SimulatorCanvas({ title, axes, mission, sample, elements, height }: SimulatorCanvasProps) {
+export function SimulatorCanvas({ title, axes, mission, sample, elements, height, overlay = null }: SimulatorCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [width, setWidth] = useState(640);
 
@@ -37,8 +40,8 @@ export function SimulatorCanvas({ title, axes, mission, sample, elements, height
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    drawScene(ctx, width, height, axes, mission, sample, elements);
-  }, [width, height, axes, mission, sample, elements]);
+    drawScene(ctx, width, height, axes, mission, sample, elements, overlay);
+  }, [width, height, axes, mission, sample, elements, overlay]);
 
   return (
     <figure className="sim-view">

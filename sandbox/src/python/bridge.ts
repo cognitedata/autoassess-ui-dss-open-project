@@ -1,9 +1,11 @@
 import type { PlanJson } from '../domain/planJson';
 import { parsePlanJson } from '../domain/planJson';
 import type { Bounds, InspectionPlan, PlanStatus, SandboxSnapshot, Vec3 } from '../domain/types';
+import { gbPlannerConfig } from '../planner/configs';
+import { GBPLANNER_INPUT_TOPICS, GBPLANNER_OUTPUT_TOPICS, GBPLANNER_SERVICES, GbPlannerSim } from '../planner/pci';
 import { sampleTelemetry } from '../sim/playback';
 import type { FlightOptions, MissionResult, Pose } from '../sim/simulator';
-import { FlightRecorder, MissionError, preflightCheck } from '../sim/simulator';
+import { FlightRecorder, MissionError, preflightCheck, taskTarget } from '../sim/simulator';
 
 /**
  * Functions exposed to Python as the `_sandbox_bridge` module. Everything crosses the boundary
@@ -28,6 +30,15 @@ export interface SandboxBridge {
   sim_report(): string;
   /** Simulated `plans.update_status`: patches the in-browser snapshot only. */
   update_plan_status(argsJson: string): string;
+  /** Simulated gbplanner (Python's SimGbPlanner) for the loaded plan's area. */
+  gb_new(argsJson: string): string;
+  /** A ROS service call: {service, request} -> {response, messages, log, state}. */
+  gb_call(argsJson: string): string;
+  /** A ROS publish: {topic, msg} -> {messages, log}. */
+  gb_publish(argsJson: string): string;
+  /** One planner step: {untilS} -> {idle, messages, log, state}. */
+  gb_spin_step(argsJson: string): string;
+  gb_report(): string;
 }
 
 export interface BridgeDeps {
@@ -53,8 +64,30 @@ class ReadOnlyError extends Error {}
 export function createSandboxBridge({ getSnapshot, onMission, onPlanPatch }: BridgeDeps): SandboxBridgeHandle {
   let recorder = new FlightRecorder();
   let hasPlan = false;
+  let loadedPlan: PlanJson | null = null;
   let planStatusAtStart: PlanStatus | null = null;
+  let planner: GbPlannerSim | null = null;
   const landedPlans = new Set<string>();
+
+  const post = () => {
+    if (hasPlan) onMission({ ...recorder.snapshot(), planStatusAtStart, ...(planner ? { planner: planner.result() } : {}) });
+  };
+  const requirePlanner = (): GbPlannerSim => {
+    if (!planner) throw new MissionError('No SimGbPlanner in this run: create one with SimGbPlanner(sim_drone)', 'state');
+    return planner;
+  };
+  /** A planner call: posts the mission afterwards (also on failure, the flight may have changed). */
+  const plannerStep = (fn: (p: GbPlannerSim) => Record<string, unknown>): string => {
+    let reply: string;
+    try {
+      const p = requirePlanner();
+      reply = JSON.stringify({ ...fn(p), state: recorder.state() });
+    } catch (err) {
+      reply = errorJson(err);
+    }
+    if (planner) post();
+    return reply;
+  };
 
   const boundsFor = (plan: PlanJson): Bounds | null =>
     getSnapshot().areas.find((a) => a.externalId === plan.areaExternalId)?.bounds ?? null;
@@ -74,7 +107,7 @@ export function createSandboxBridge({ getSnapshot, onMission, onPlanPatch }: Bri
     } catch (err) {
       reply = errorJson(err, { events: newEvents() });
     }
-    if (hasPlan) onMission({ ...recorder.snapshot(), planStatusAtStart });
+    post();
     return reply;
   };
 
@@ -89,6 +122,8 @@ export function createSandboxBridge({ getSnapshot, onMission, onPlanPatch }: Bri
       guarded(() => {
         recorder.configure(parseFlightOptions(JSON.parse(optionsJson)));
         hasPlan = false;
+        loadedPlan = null;
+        planner = null;
         return recorder.state();
       }),
     sim_load_plan: (planJson) => {
@@ -99,8 +134,10 @@ export function createSandboxBridge({ getSnapshot, onMission, onPlanPatch }: Bri
         return errorJson(err);
       }
       return step(() => {
+        planner = null;
         const issues = recorder.loadPlan(plan, boundsFor(plan));
         hasPlan = true;
+        loadedPlan = plan;
         planStatusAtStart = getSnapshot().plans.find((p) => p.externalId === plan.planExternalId)?.status ?? null;
         return issues;
       });
@@ -156,6 +193,55 @@ export function createSandboxBridge({ getSnapshot, onMission, onPlanPatch }: Bri
         onPlanPatch(patched);
         return patched;
       }),
+    gb_new: (argsJson) =>
+      guarded(() => {
+        const args = asRecord(JSON.parse(argsJson));
+        const config = gbPlannerConfig(String(args['config'] ?? 'bwt_inspection'));
+        if (!hasPlan || !loadedPlan) {
+          throw new MissionError('SimGbPlanner needs the area: call sim_drone.load_plan(plan) first', 'state');
+        }
+        const plan = loadedPlan;
+        const mission = recorder.snapshot();
+        planner = new GbPlannerSim({
+          drone: recorder,
+          config,
+          seed: typeof args['seed'] === 'number' ? args['seed'] : 0,
+          bounds: boundsFor(plan),
+          elements: getSnapshot().elements.filter((e) => e.areaExternalId === plan.areaExternalId),
+          home: mission.home,
+          speedMps: mission.options.speedMps,
+          maxFlightTimeS: mission.options.maxFlightTimeS,
+          tasks: plan.tasks.map((t) => ({
+            id: t.id,
+            target: taskTarget(t),
+            normal: t.kind === 'region' && t.normalVector ? t.normalVector : null,
+          })),
+        });
+        post();
+        return {
+          config: config.name,
+          services: GBPLANNER_SERVICES,
+          inputTopics: GBPLANNER_INPUT_TOPICS,
+          outputTopics: GBPLANNER_OUTPUT_TOPICS,
+          tank: planner.tank.description,
+        };
+      }),
+    gb_call: (argsJson) =>
+      plannerStep((p) => {
+        const args = asRecord(JSON.parse(argsJson));
+        return { ...p.call(String(args['service']), asRecord(args['request'])) };
+      }),
+    gb_publish: (argsJson) =>
+      plannerStep((p) => {
+        const args = asRecord(JSON.parse(argsJson));
+        return { ...p.publish(String(args['topic']), asRecord(args['msg'])) };
+      }),
+    gb_spin_step: (argsJson) =>
+      plannerStep((p) => {
+        const untilS = asRecord(JSON.parse(argsJson || '{}'))['untilS'];
+        return { ...p.spinStep(typeof untilS === 'number' ? untilS : null) };
+      }),
+    gb_report: () => guarded(() => requirePlanner().report()),
   };
 
   return {
@@ -163,6 +249,8 @@ export function createSandboxBridge({ getSnapshot, onMission, onPlanPatch }: Bri
     resetRun: () => {
       recorder = new FlightRecorder();
       hasPlan = false;
+      loadedPlan = null;
+      planner = null;
       landedPlans.clear();
     },
   };

@@ -87,14 +87,21 @@ export function distanceAt(mission: MissionResult, t: number): number {
 }
 
 /** What a task is doing at the sampled moment, for the task list. */
-export type TaskState = 'pending' | 'en-route' | 'inspecting' | 'inspected' | 'skipped';
+export type TaskState = 'pending' | 'en-route' | 'inspecting' | 'inspected' | 'skipped' | 'covered';
 
-export function taskStateAt(task: MissionTaskResult, sample: MissionSample): TaskState {
+/**
+ * `coveredAt`: when a simulated gbplanner's inspection camera covered the task (it may never be
+ * inspected with `sim_drone.inspect`); shown unless the drone inspects or works on the task.
+ */
+export function taskStateAt(task: MissionTaskResult, sample: MissionSample, coveredAt?: number): TaskState {
   if (task.visitedAt !== undefined && task.visitedAt <= sample.t) return 'inspected';
-  if (task.skippedAt !== undefined && task.skippedAt <= sample.t) return 'skipped';
-  if (sample.activeTaskId === task.id) {
+  const skipped = task.skippedAt !== undefined && task.skippedAt <= sample.t;
+  if (sample.activeTaskId === task.id && !skipped) {
     if (sample.phase === 'inspect') return 'inspecting';
     if (sample.phase === 'transit') return 'en-route';
   }
+  // Covered by the planner camera beats "skipped: not inspected" at landing.
+  if (coveredAt !== undefined && coveredAt <= sample.t) return 'covered';
+  if (skipped) return 'skipped';
   return 'pending';
 }

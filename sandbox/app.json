@@ -2,7 +2,7 @@
   "name": "AutoAssess Drone Sandbox",
   "description": "In-browser Python sandbox for the dss SDK with a drone mission simulator",
   "externalId": "autoassess-drone-sandbox",
-  "versionTag": "0.0.1",
+  "versionTag": "0.0.2",
   "infra": "appsApi",
   "deployments": [
     {
