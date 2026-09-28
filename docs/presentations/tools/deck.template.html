@@ -1,0 +1,768 @@
+<title>Plan to Mission to Report</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@112,500;112,700;112,800&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  --ink: #13212b;
+  --paper: #f2f4f3;
+  --panel: #ffffff;
+  --steel: #5c6f7a;
+  --rule: #d5dcdf;
+  --hazard: #e3b21c;
+  --hazard-ink: #13212b;
+  --data: #2f6fd6;
+  --ok: #1f8a4c;
+  --warn: #c0392b;
+  --code-bg: #13212b;
+  --code-ink: #e6ecef;
+  --code-key: #f0c64a;
+  --code-str: #8fd0a4;
+  --code-com: #8397a3;
+  --ground: #dfe4e6;
+  --shadow: 0 1px 2px rgba(19, 33, 43, .08), 0 8px 24px rgba(19, 33, 43, .08);
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ink: #e6ecef; --paper: #0f1a21; --panel: #16242d; --steel: #93a6b1; --rule: #2a3b46;
+    --hazard: #f0c64a; --hazard-ink: #13212b; --data: #6aa2ff; --ok: #4cc27f; --warn: #ff7a6b;
+    --code-bg: #0a1318; --ground: #0b141a;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ink: #e6ecef; --paper: #0f1a21; --panel: #16242d; --steel: #93a6b1; --rule: #2a3b46;
+  --hazard: #f0c64a; --hazard-ink: #13212b; --data: #6aa2ff; --ok: #4cc27f; --warn: #ff7a6b;
+  --code-bg: #0a1318; --ground: #0b141a;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px rgba(0,0,0,.35);
+}
+
+html, body { height: 100%; }
+body {
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--body);
+  padding-inline: 16px;
+  box-sizing: border-box;
+}
+*, *::before, *::after { box-sizing: inherit; }
+
+/* ---------- deck shell ---------- */
+.deck {
+  height: 100%;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  gap: 10px;
+  padding-block: 12px;
+  max-width: calc((100vh - 90px) * 16 / 9);
+  margin-inline: auto;
+}
+.stage {
+  align-self: center;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  container-type: inline-size;
+  position: relative;
+}
+.slide {
+  --u: 1cqw;
+  position: absolute; inset: 0;
+  background: var(--paper);
+  border-radius: 6px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  padding: calc(var(--u) * 4.2) calc(var(--u) * 5) calc(var(--u) * 3.6);
+  display: flex; flex-direction: column; gap: calc(var(--u) * 1.8);
+  font-size: calc(var(--u) * 1.55);
+  line-height: 1.45;
+}
+.slide:not(.is-current) { display: none; }
+
+.controls {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  font-size: 13px; color: var(--steel);
+}
+.controls button {
+  font: inherit; font-weight: 600; color: var(--ink);
+  background: var(--panel); border: 1px solid var(--rule); border-radius: 4px;
+  padding: 6px 12px; cursor: pointer;
+}
+.controls button:hover { border-color: var(--steel); }
+.controls button:focus-visible, .rail button:focus-visible { outline: 2px solid var(--data); outline-offset: 2px; }
+.controls .count { font-variant-numeric: tabular-nums; min-width: 4.5em; }
+.controls .spacer { flex: 1; }
+.notes-panel {
+  background: var(--panel); border: 1px solid var(--rule); border-left: 4px solid var(--hazard);
+  border-radius: 4px; padding: 10px 14px; font-size: 14px; line-height: 1.5; max-height: 22vh; overflow: auto;
+}
+.notes-panel h4 { margin: 0 0 4px; font: 600 11px/1 var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--steel); }
+.notes-panel p { margin: 0 0 6px; }
+.slide aside.notes { display: none; }
+
+/* ---------- mission rail (top of every content slide) ---------- */
+.rail {
+  display: flex; gap: calc(var(--u) * .5); align-items: center;
+  font: 600 calc(var(--u) * .95)/1 var(--body); letter-spacing: .1em; text-transform: uppercase;
+  color: var(--steel);
+}
+.rail span { padding: calc(var(--u) * .45) calc(var(--u) * .8); border: 1px solid var(--rule); border-radius: 2px; }
+.rail span.on { background: var(--hazard); color: var(--hazard-ink); border-color: var(--hazard); }
+.rail .sep { border: 0; padding: 0; width: calc(var(--u) * 1.2); height: 1px; background: var(--rule); }
+.rail .clock { margin-left: auto; border: 0; font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+
+/* ---------- type ---------- */
+h1, h2, h3 { font-family: var(--display); margin: 0; text-wrap: balance; font-stretch: 112%; }
+h1 { font-weight: 800; font-size: calc(var(--u) * 5.4); line-height: 1.02; letter-spacing: -.01em; }
+h2 { font-weight: 700; font-size: calc(var(--u) * 3.1); line-height: 1.08; }
+h3 { font-weight: 700; font-size: calc(var(--u) * 1.55); line-height: 1.2; }
+.kicker { font: 600 calc(var(--u) * 1)/1 var(--body); letter-spacing: .12em; text-transform: uppercase; color: var(--steel); }
+.lede { font-size: calc(var(--u) * 1.9); line-height: 1.35; max-width: 62ch; color: var(--ink); margin: 0; }
+p { margin: 0; }
+.muted { color: var(--steel); }
+code, .mono { font-family: var(--mono); font-size: .92em; }
+.tbd {
+  display: inline-block; font: 600 calc(var(--u) * .9)/1 var(--body); letter-spacing: .06em; text-transform: uppercase;
+  background: repeating-linear-gradient(-45deg, var(--hazard) 0 6px, transparent 6px 12px);
+  color: var(--ink); padding: calc(var(--u) * .35) calc(var(--u) * .6); border: 1px solid var(--hazard); border-radius: 2px;
+  background-color: var(--paper);
+}
+.tbd b { background: var(--paper); padding: 0 .3em; }
+
+/* ---------- layout helpers ---------- */
+.grow { flex: 1; min-height: 0; }
+.cols { display: grid; gap: calc(var(--u) * 2.4); grid-template-columns: repeat(var(--n, 2), minmax(0, 1fr)); }
+.cols.w-6-4 { grid-template-columns: 1.5fr 1fr; }
+.cols.w-4-6 { grid-template-columns: 1fr 1.5fr; }
+.stack { display: flex; flex-direction: column; gap: calc(var(--u) * 1); }
+ul.clean { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: calc(var(--u) * .75); }
+ul.clean li { padding-left: calc(var(--u) * 1.6); position: relative; }
+ul.clean li::before { content: ""; position: absolute; left: 0; top: .6em; width: calc(var(--u) * .7); height: 2px; background: var(--hazard); }
+.card { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: calc(var(--u) * 1.4) calc(var(--u) * 1.6); display: flex; flex-direction: column; gap: calc(var(--u) * .7); }
+.card h3 { display: flex; align-items: baseline; gap: calc(var(--u) * .8); }
+.tag { font: 600 calc(var(--u) * .85)/1 var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--steel); }
+
+pre.code {
+  margin: 0; background: var(--code-bg); color: var(--code-ink); border-radius: 4px;
+  padding: calc(var(--u) * 1.2) calc(var(--u) * 1.5);
+  font: 400 calc(var(--u) * 1.12)/1.5 var(--mono); overflow: hidden; white-space: pre;
+}
+pre.code .k { color: var(--code-key); }
+pre.code .s { color: var(--code-str); }
+pre.code .c { color: var(--code-com); font-style: italic; }
+
+table.spec { width: 100%; border-collapse: collapse; font-size: calc(var(--u) * 1.3); }
+table.spec th { text-align: left; font: 600 calc(var(--u) * .9)/1.2 var(--body); letter-spacing: .08em; text-transform: uppercase; color: var(--steel); padding: 0 calc(var(--u) * 1) calc(var(--u) * .6) 0; border-bottom: 2px solid var(--ink); }
+table.spec td { padding: calc(var(--u) * .6) calc(var(--u) * 1) calc(var(--u) * .6) 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+table.spec td:first-child { white-space: nowrap; }
+
+.shot { border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; background: var(--panel); min-height: 0; }
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.caption { font-size: calc(var(--u) * 1.05); color: var(--steel); }
+
+/* ---------- title slide ---------- */
+.slide.title { background: var(--ink); color: var(--paper); justify-content: space-between; }
+.slide.title .kicker { color: #a9b8c0; }
+.slide.title h1 { color: #f2f4f3; max-width: 15ch; }
+.slide.title .lede { color: #d5dde1; }
+.hazard-band { height: calc(var(--u) * 1.2); background: repeating-linear-gradient(-45deg, var(--hazard) 0 calc(var(--u) * 1.3), #13212b calc(var(--u) * 1.3) calc(var(--u) * 2.6)); margin-inline: calc(var(--u) * -5); }
+.title-meta { display: flex; gap: calc(var(--u) * 4); flex-wrap: wrap; font-size: calc(var(--u) * 1.3); color: #d5dde1; }
+.title-meta b { display: block; font: 600 calc(var(--u) * .9)/1.4 var(--body); letter-spacing: .1em; text-transform: uppercase; color: #a9b8c0; }
+
+/* ---------- agenda ---------- */
+.agenda { display: grid; grid-template-columns: auto auto 1fr; column-gap: calc(var(--u) * 2); row-gap: 0; font-size: calc(var(--u) * 1.5); }
+.agenda > div { padding: calc(var(--u) * .75) 0; border-bottom: 1px solid var(--rule); }
+.agenda .t { font-family: var(--mono); font-variant-numeric: tabular-nums; color: var(--steel); }
+.agenda .m { font-family: var(--mono); color: var(--steel); text-align: right; }
+
+/* ---------- system diagram ---------- */
+.system { display: grid; grid-template-columns: 1fr auto 1.25fr auto 1fr auto 1fr; align-items: stretch; gap: calc(var(--u) * .8); }
+.node { background: var(--panel); border: 1px solid var(--rule); border-radius: 4px; padding: calc(var(--u) * 1.2); display: flex; flex-direction: column; gap: calc(var(--u) * .5); }
+.node.cdf { border: 2px solid var(--data); }
+.node .who { font: 600 calc(var(--u) * .85)/1 var(--body); letter-spacing: .1em; text-transform: uppercase; color: var(--steel); }
+.node h3 { font-size: calc(var(--u) * 1.5); }
+.node p { font-size: calc(var(--u) * 1.15); color: var(--steel); }
+.link { align-self: center; display: flex; flex-direction: column; align-items: center; gap: calc(var(--u) * .3); font: 500 calc(var(--u) * .9)/1.2 var(--mono); color: var(--steel); text-align: center; }
+.link::before { content: "⟷"; font-size: calc(var(--u) * 2); color: var(--ink); line-height: 1; }
+.link.one::before { content: "⟶"; }
+
+/* ---------- lifecycle swimlanes ---------- */
+.lanes { display: grid; grid-template-columns: calc(var(--u) * 11) repeat(10, minmax(0, 1fr)); grid-template-rows: repeat(4, 1fr); gap: calc(var(--u) * .35); font-size: calc(var(--u) * 1.02); line-height: 1.25; }
+.lane-name { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: calc(var(--u) * .2); font: 600 calc(var(--u) * .95)/1.2 var(--body); color: var(--ink); border-right: 2px solid var(--ink); padding-right: calc(var(--u) * .8); }
+.lane-name small { display: block; color: var(--steel); font-weight: 400; }
+.step { border-radius: 3px; padding: calc(var(--u) * .55); background: var(--panel); border: 1px solid var(--rule); display: flex; flex-direction: column; gap: calc(var(--u) * .25); }
+.step b { font-family: var(--mono); font-weight: 500; color: var(--steel); }
+.step.web { border-top: 3px solid var(--data); }
+.step.gs { border-top: 3px solid var(--hazard); }
+.step.drone { border-top: 3px solid var(--ink); }
+.step.cdf { background: transparent; border-style: dashed; }
+
+/* ---------- phase blocks ---------- */
+.roles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: calc(var(--u) * 1.6); }
+.role { border-top: 4px solid var(--ink); padding-top: calc(var(--u) * 1); display: flex; flex-direction: column; gap: calc(var(--u) * .7); }
+.role.web { border-color: var(--data); }
+.role.gs { border-color: var(--hazard); }
+.role ol { margin: 0; padding-left: 1.3em; display: flex; flex-direction: column; gap: calc(var(--u) * .45); }
+.role .where { font: 500 calc(var(--u) * 1)/1.3 var(--mono); color: var(--steel); }
+
+.pill { display: inline-flex; align-items: center; gap: .4em; font: 600 calc(var(--u) * .95)/1 var(--body); padding: calc(var(--u) * .35) calc(var(--u) * .7); border-radius: 999px; border: 1px solid currentColor; }
+.pill.draft { color: var(--steel); }
+.pill.ready { color: var(--data); }
+.pill.done { color: var(--ok); }
+.flow-states { display: flex; align-items: center; gap: calc(var(--u) * .8); flex-wrap: wrap; }
+.flow-states .arrow { color: var(--steel); }
+
+.big-q { font-family: var(--display); font-weight: 700; font-stretch: 112%; font-size: calc(var(--u) * 2.2); line-height: 1.15; border-left: 6px solid var(--hazard); padding-left: calc(var(--u) * 1.4); }
+
+.slide.dense { font-size: calc(var(--u) * 1.22); gap: calc(var(--u) * 1.3); }
+.slide.dense ul.clean { gap: calc(var(--u) * .45); }
+.slide.dense .card { padding: calc(var(--u) * 1.1) calc(var(--u) * 1.3); }
+.slide.dense .flow-states { font-size: calc(var(--u) * 1.1); }
+pre.code.small { font-size: calc(var(--u) * .98); }
+
+.seq { min-height: 0; display: flex; justify-content: center; }
+.seq svg { width: 100%; height: 100%; }
+
+/* ---------- phone: stacked slides ---------- */
+@media (max-width: 760px) {
+  .deck { display: block; max-width: none; height: auto; padding-block: 16px; }
+  .stage { aspect-ratio: auto; container-type: normal; display: flex; flex-direction: column; gap: 16px; }
+  .slide { --u: 9px; position: relative; inset: auto; display: flex !important; padding: 24px 18px; font-size: 15px; }
+  .controls { display: none; }
+  .notes-panel { display: none; }
+  .cols, .cols.w-6-4, .cols.w-4-6, .roles { grid-template-columns: 1fr; }
+  .system { grid-template-columns: 1fr; }
+  .link::before { content: "↕"; }
+  .lanes-wrap { overflow-x: auto; }
+  .lanes { min-width: 900px; }
+  .spec-wrap { overflow-x: auto; }
+  pre.code { overflow-x: auto; }
+  .shot { max-height: 60vh; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .slide.is-current { animation: in .18s ease-out; }
+  @keyframes in { from { opacity: .6; } to { opacity: 1; } }
+}
+</style>
+
+<div class="deck">
+  <div class="stage" id="stage">
+
+    <!-- 1 -->
+    <section class="slide title is-current" data-phase="">
+      <div class="kicker">Integration week · CGN session · 09:15–10:15</div>
+      <div class="stack">
+        <h1>Plan → mission → report</h1>
+        <p class="lede">The loop runs itself: plan in the app, the robot flies and reports, models build automatically. Humans plan and review. Today we run it live.</p>
+      </div>
+      <div class="stack">
+        <div class="title-meta">
+          <div><b>You leave with</b>The full loop run live end to end, the two ROS topics your side integrates with, and a sandbox to practise in</div>
+          <div><b>Bring</b>A laptop with Chrome and your Fusion login</div>
+        </div>
+        <div class="hazard-band"></div>
+      </div>
+      <aside class="notes"><p>Welcome. One hour, four questions: what hardware and environment you need, what you get in (the plan), who does what, and what you must send back. The last 15 minutes are hands-on in the sandbox, so get people to open the sandbox link now while you talk.</p></aside>
+    </section>
+
+    <!-- 2 -->
+    <section class="slide" data-phase="">
+      <div class="rail"><span class="clock">09:15</span></div>
+      <h2>The hour</h2>
+      <div class="agenda grow">
+        <div class="t">09:15</div><div class="m">5′</div><div>The loop and the one rule: <b>CDF is the only integration point</b></div>
+        <div class="t">09:20</div><div class="m">25′</div><div><b>Live demo</b>: plan in the app → topics on the robot → mission + findings → automatic upload → 3D models → review</div>
+        <div class="t">09:45</div><div class="m">8′</div><div>Your two interfaces: <code>plan.json</code> in, findings JSON out (+ mission files)</div>
+        <div class="t">09:53</div><div class="m">7′</div><div>Hardware and environment · app deployment</div>
+        <div class="t">10:00</div><div class="m">12′</div><div>Hands-on in the sandbox (works without a robot)</div>
+        <div class="t">10:12</div><div class="m">3′</div><div>Open questions we need your answer on</div>
+      </div>
+      <aside class="notes"><p>Keep to time: the hands-on block is what people remember. If discussion runs long in the HW block, park items on the open-questions slide.</p></aside>
+    </section>
+
+    <!-- 3 -->
+    <section class="slide" data-phase="all">
+      <div class="rail"><span>Plan</span><i class="sep"></i><span>Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">09:20</span></div>
+      <h2>Four parts, one integration point</h2>
+      <div class="system">
+        <div class="node"><div class="who">Inspector</div><h3>AutoAssess web app</h3><p>Flows app inside Cognite Fusion. Plans tasks in 3D, reviews results. No backend.</p></div>
+        <div class="link">user login</div>
+        <div class="node cdf"><div class="who">Cognite Data Fusion</div><h3>autoassess-dev</h3><p>Data Modeling space <code>autoassess</code>: Vessel, Area, Plan, Task, Result, NDT, Defects, Images. Files as <code>CogniteFile</code>.</p></div>
+        <div class="link">service account<br>HTTPS</div>
+        <div class="node"><div class="who">Automatic</div><h3>autoassess_bridge</h3><p>ROS node + <code>dss worker</code>, started once with <code>roslaunch</code>. Publishes plans and maps, uploads missions, creates campaigns and findings plans, builds 3D models.</p></div>
+        <div class="link">ROS topics</div>
+        <div class="node"><div class="who">Your hardware</div><h3>Drone</h3><p>Flies the tasks, produces the mission folder. Everything here is yours.</p></div>
+      </div>
+      <p class="lede grow" style="font-size:calc(var(--u)*1.6)">The web app and the ground station never talk to each other. Everything goes through CDF. Your integration surface is <b>two ROS topics</b>: the plan arrives on <code>/autoassess/plan</code>, findings leave on <code>/autoassess/findings</code>. Everything in between is automatic.</p>
+      <aside class="notes"><p>Stress the boundary: we don't control the drone (PRD: "low-level drone control is handled externally by the ground station and WP4"). We don't run SLAM or defect detection either; those arrive as files.</p></aside>
+    </section>
+
+    <!-- 4 -->
+    <section class="slide" data-phase="all">
+      <div class="rail"><span>Plan</span><i class="sep"></i><span>Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">09:25</span></div>
+      <h2>Mission lifecycle</h2>
+      <div class="lanes-wrap grow">
+        <div class="lanes" style="height:100%">
+          <div class="lane-name">Inspector<small>web app</small></div>
+          <div class="step web"><b>1</b>Create plan, pick reference map</div>
+          <div class="step web"><b>2</b>Add tasks in 3D</div>
+          <div class="step web"><b>3</b>Mark <span class="pill ready">Ready</span></div>
+          <div></div><div></div><div></div><div></div>
+          <div class="step web"><b>8</b>Review campaign + findings plan</div>
+          <div class="step web"><b>9</b>Findings plan <span class="pill ready">Ready</span> → next mission</div>
+          <div></div>
+
+          <div class="lane-name">CDF<small>autoassess space</small></div>
+          <div class="step cdf">Plan <span class="pill draft">Draft</span></div>
+          <div class="step cdf">Tasks</div>
+          <div class="step cdf">Plan <span class="pill ready">Ready</span></div>
+          <div></div><div></div>
+          <div class="step cdf">Campaign <span class="pill done">Complete</span> · findings plan <span class="pill draft">Draft</span></div>
+          <div class="step cdf">3D models</div>
+          <div></div><div></div><div></div>
+
+          <div class="lane-name">Bridge<small>automatic (ROS)</small></div>
+          <div></div><div></div><div></div>
+          <div class="step gs"><b>4</b>Publish plan, targets + reference map</div>
+          <div></div>
+          <div class="step gs"><b>6</b>Mission end: upload map, create campaign + findings plan</div>
+          <div class="step gs"><b>7</b><code>dss worker</code> builds 3D models</div>
+          <div></div><div></div><div></div>
+
+          <div class="lane-name">Robot<small>gbplanner + your stack</small></div>
+          <div></div><div></div><div></div><div></div>
+          <div class="step drone"><b>5</b>Fly the mission; publish findings</div>
+          <div></div><div></div><div></div><div></div><div></div>
+        </div>
+      </div>
+      <aside class="notes"><p>Walk left to right. Steps 4–7 run with no human involved: the bridge publishes, the robot flies and publishes findings, the bridge uploads and creates the campaign and findings Draft plan, the ROS-launched worker builds models. Humans appear only at the ends: planning (1–3) and review (8–9). Note the plan is read-only once Ready. Execution progress lives on the campaign (InProgress → Complete), not on the plan: PRD §4.3 asks whether you need an InProgress state on the plan too. That's an open question for you.</p></aside>
+    </section>
+
+    <!-- sequence 1 -->
+    <section class="slide" data-phase="all">
+      <div class="rail"><span class="on">Plan</span><i class="sep"></i><span>Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">09:27</span></div>
+      <h2>Sequence 1/2: plan → robot, all automatic</h2>
+      <div class="seq grow"><svg class="sq" viewBox="0 0 1160 432" role="img" aria-label="Mission sequence, part 1: plan and hand-over" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"><title>Mission sequence, part 1: plan and hand-over</title>
+<style>
+  .sq text { font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; fill: var(--ink, #13212b); }
+  .sq .lbl { font-size: 14px; paint-order: stroke; stroke: var(--paper, #f2f4f3); stroke-width: 5px; stroke-linejoin: round; }
+  .sq .lbl code, .sq .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+  .sq .head { fill: var(--panel, #fff); stroke: var(--ink, #13212b); stroke-width: 1.5; }
+  .sq .head.cdf { stroke: var(--data, #2f6fd6); stroke-width: 2.5; }
+  .sq .head.gs { stroke: var(--hazard, #e3b21c); stroke-width: 2.5; }
+  .sq .htitle { font-family: "Archivo", "Helvetica Neue", Arial, sans-serif; font-weight: 700; font-size: 16px; }
+  .sq .hsub { font-size: 11.5px; fill: var(--steel, #5c6f7a); letter-spacing: .04em; }
+  .sq .life { stroke: var(--steel, #5c6f7a); stroke-width: 1; stroke-dasharray: 4 4; }
+  .sq .act { fill: var(--hazard, #e3b21c); fill-opacity: .28; stroke: var(--ink, #13212b); stroke-width: 1; }
+  .sq .msg { stroke: var(--ink, #13212b); stroke-width: 1.6; fill: none; }
+  .sq .ret { stroke: var(--ink, #13212b); stroke-width: 1.4; fill: none; stroke-dasharray: 7 5; }
+  .sq .headfill { fill: var(--ink, #13212b); }
+  .sq .frame { fill: none; stroke: var(--data, #2f6fd6); stroke-width: 1.5; }
+  .sq .frame.loop { stroke: var(--ok, #1f8a4c); }
+  .sq .frame.inner { stroke-opacity: .75; }
+  .sq .tag { fill: var(--panel, #fff); stroke: inherit; }
+  .sq .tagtxt { font-size: 12.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .sq .guard { font-size: 13px; font-style: italic; fill: var(--steel, #5c6f7a); paint-order: stroke; stroke: var(--paper, #f2f4f3); stroke-width: 5px; stroke-linejoin: round; }
+  .sq .sep { stroke: var(--data, #2f6fd6); stroke-width: 1.3; stroke-dasharray: 8 6; }
+  .sq .num { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; fill: var(--steel, #5c6f7a); }
+</style>
+<line class="life" x1="90" y1="84" x2="90" y2="426"/><rect class="act" x="85" y="96" width="10" height="322"/><line class="life" x1="320" y1="64" x2="320" y2="426"/><rect class="act" x="315" y="96" width="10" height="322"/><line class="life" x1="560" y1="64" x2="560" y2="426"/><rect class="act" x="555" y="96" width="10" height="322"/><line class="life" x1="810" y1="64" x2="810" y2="426"/><rect class="act" x="805" y="96" width="10" height="322"/><line class="life" x1="1060" y1="64" x2="1060" y2="426"/><rect class="act" x="1055" y="96" width="10" height="322"/><g stroke="var(--ink, #13212b)" stroke-width="1.8" fill="none"><circle cx="90" cy="16" r="9"/><line x1="90" y1="25" x2="90" y2="46"/><line x1="76" y1="33" x2="104" y2="33"/><line x1="90" y1="46" x2="79" y2="60"/><line x1="90" y1="46" x2="101" y2="60"/></g><text class="htitle" x="90" y="78" text-anchor="middle">Inspector</text><rect class="head" x="228" y="6" width="184" height="58" rx="3"/><text class="htitle" x="320" y="31" text-anchor="middle">Web app</text><text class="hsub" x="320" y="51" text-anchor="middle">Fusion · Flows</text><rect class="head cdf" x="468" y="6" width="184" height="58" rx="3"/><text class="htitle" x="560" y="31" text-anchor="middle">CDF</text><text class="hsub" x="560" y="51" text-anchor="middle">autoassess space</text><rect class="head gs" x="718" y="6" width="184" height="58" rx="3"/><text class="htitle" x="810" y="31" text-anchor="middle">autoassess_bridge</text><text class="hsub" x="810" y="51" text-anchor="middle">ROS node</text><rect class="head" x="968" y="6" width="184" height="58" rx="3"/><text class="htitle" x="1060" y="31" text-anchor="middle">Robot</text><text class="hsub" x="1060" y="51" text-anchor="middle">gbplanner + sensors</text><line class="msg" x1="96" y1="140" x2="305" y2="140"/><path class="headfill" d="M314,140 l-11,-5.5 v11 z"/><text class="lbl" x="205.0" y="132" text-anchor="middle"><tspan class="num">1  </tspan>Create plan, pick reference map</text><line class="msg" x1="326" y1="170" x2="545" y2="170"/><path class="headfill" d="M554,170 l-11,-5.5 v11 z"/><text class="lbl" x="440.0" y="162" text-anchor="middle"><tspan class="num">2  </tspan>InspectionPlan <tspan class="mono">Draft</tspan> + tasks</text><line class="msg" x1="96" y1="200" x2="305" y2="200"/><path class="headfill" d="M314,200 l-11,-5.5 v11 z"/><text class="lbl" x="205.0" y="192" text-anchor="middle"><tspan class="num">3  </tspan>Mark <tspan class="mono">Ready</tspan></text><line class="msg" x1="326" y1="230" x2="545" y2="230"/><path class="headfill" d="M554,230 l-11,-5.5 v11 z"/><text class="lbl" x="440.0" y="222" text-anchor="middle"><tspan class="num">4  </tspan>plan.status = <tspan class="mono">Ready</tspan></text><line class="msg" x1="804" y1="270" x2="575" y2="270"/><path class="headfill" d="M566,270 l11,-5.5 v11 z"/><text class="lbl" x="685.0" y="262" text-anchor="middle"><tspan class="num">5  </tspan>poll: newest Ready plan (automatic)</text><line class="ret" x1="566" y1="300" x2="795" y2="300"/><path class="ret" style="stroke-dasharray:none" d="M793,294 L804,300 L793,306"/><text class="lbl" x="685.0" y="292" text-anchor="middle"><tspan class="num">6  </tspan><tspan class="mono">plan.json</tspan> + reference map</text><path class="msg" d="M816,324 h30 v18 h-20"/><path class="headfill" d="M816,342 l11,-5.5 v11 z"/><text class="lbl" x="796" y="337" text-anchor="end"><tspan class="num">7  </tspan>set gbplanner global bound</text><line class="msg" x1="816" y1="370" x2="1045" y2="370"/><path class="headfill" d="M1054,370 l-11,-5.5 v11 z"/><text class="lbl" x="935.0" y="362" text-anchor="middle"><tspan class="num">8  </tspan><tspan class="mono">/autoassess/plan</tspan>, <tspan class="mono">/autoassess/inspection_targets</tspan></text><line class="msg" x1="816" y1="400" x2="1045" y2="400"/><path class="headfill" d="M1054,400 l-11,-5.5 v11 z"/><text class="lbl" x="935.0" y="392" text-anchor="middle"><tspan class="num">9  </tspan><tspan class="mono">/ballast_tank/pointcloud</tspan> (latched map)</text></svg></div>
+      <aside class="notes"><p>Steps 1–4 happen in the web app and end with a Ready plan in CDF. From step 5 nobody touches a keyboard: the bridge polls CDF, downloads the plan and its reference map, sets gbplanner's global bound and publishes everything as latched ROS topics. In the live run, Ready-to-topics took about 7 seconds.</p></aside>
+    </section>
+
+    <!-- sequence 2 -->
+    <section class="slide" data-phase="all">
+      <div class="rail"><span>Plan</span><i class="sep"></i><span class="on">Fly</span><i class="sep"></i><span class="on">Upload</span><i class="sep"></i><span>Review</span><span class="clock">09:29</span></div>
+      <h2>Sequence 2/2: mission → findings → models → review</h2>
+      <div class="seq grow"><svg class="sq" viewBox="0 0 1160 552" role="img" aria-label="Mission sequence, part 2: fly, upload and review" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMin meet"><title>Mission sequence, part 2: fly, upload and review</title>
+<style>
+  .sq text { font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif; fill: var(--ink, #13212b); }
+  .sq .lbl { font-size: 14px; paint-order: stroke; stroke: var(--paper, #f2f4f3); stroke-width: 5px; stroke-linejoin: round; }
+  .sq .lbl code, .sq .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+  .sq .head { fill: var(--panel, #fff); stroke: var(--ink, #13212b); stroke-width: 1.5; }
+  .sq .head.cdf { stroke: var(--data, #2f6fd6); stroke-width: 2.5; }
+  .sq .head.gs { stroke: var(--hazard, #e3b21c); stroke-width: 2.5; }
+  .sq .htitle { font-family: "Archivo", "Helvetica Neue", Arial, sans-serif; font-weight: 700; font-size: 16px; }
+  .sq .hsub { font-size: 11.5px; fill: var(--steel, #5c6f7a); letter-spacing: .04em; }
+  .sq .life { stroke: var(--steel, #5c6f7a); stroke-width: 1; stroke-dasharray: 4 4; }
+  .sq .act { fill: var(--hazard, #e3b21c); fill-opacity: .28; stroke: var(--ink, #13212b); stroke-width: 1; }
+  .sq .msg { stroke: var(--ink, #13212b); stroke-width: 1.6; fill: none; }
+  .sq .ret { stroke: var(--ink, #13212b); stroke-width: 1.4; fill: none; stroke-dasharray: 7 5; }
+  .sq .headfill { fill: var(--ink, #13212b); }
+  .sq .frame { fill: none; stroke: var(--data, #2f6fd6); stroke-width: 1.5; }
+  .sq .frame.loop { stroke: var(--ok, #1f8a4c); }
+  .sq .frame.inner { stroke-opacity: .75; }
+  .sq .tag { fill: var(--panel, #fff); stroke: inherit; }
+  .sq .tagtxt { font-size: 12.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+  .sq .guard { font-size: 13px; font-style: italic; fill: var(--steel, #5c6f7a); paint-order: stroke; stroke: var(--paper, #f2f4f3); stroke-width: 5px; stroke-linejoin: round; }
+  .sq .sep { stroke: var(--data, #2f6fd6); stroke-width: 1.3; stroke-dasharray: 8 6; }
+  .sq .num { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: 12px; fill: var(--steel, #5c6f7a); }
+</style>
+<line class="life" x1="90" y1="84" x2="90" y2="546"/><rect class="act" x="85" y="96" width="10" height="442"/><line class="life" x1="320" y1="64" x2="320" y2="546"/><rect class="act" x="315" y="96" width="10" height="442"/><line class="life" x1="560" y1="64" x2="560" y2="546"/><rect class="act" x="555" y="96" width="10" height="442"/><line class="life" x1="810" y1="64" x2="810" y2="546"/><rect class="act" x="805" y="96" width="10" height="442"/><line class="life" x1="1060" y1="64" x2="1060" y2="546"/><rect class="act" x="1055" y="96" width="10" height="442"/><g stroke="var(--ink, #13212b)" stroke-width="1.8" fill="none"><circle cx="90" cy="16" r="9"/><line x1="90" y1="25" x2="90" y2="46"/><line x1="76" y1="33" x2="104" y2="33"/><line x1="90" y1="46" x2="79" y2="60"/><line x1="90" y1="46" x2="101" y2="60"/></g><text class="htitle" x="90" y="78" text-anchor="middle">Inspector</text><rect class="head" x="228" y="6" width="184" height="58" rx="3"/><text class="htitle" x="320" y="31" text-anchor="middle">Web app</text><text class="hsub" x="320" y="51" text-anchor="middle">Fusion · Flows</text><rect class="head cdf" x="468" y="6" width="184" height="58" rx="3"/><text class="htitle" x="560" y="31" text-anchor="middle">CDF</text><text class="hsub" x="560" y="51" text-anchor="middle">autoassess space</text><rect class="head gs" x="718" y="6" width="184" height="58" rx="3"/><text class="htitle" x="810" y="31" text-anchor="middle">autoassess_bridge</text><text class="hsub" x="810" y="51" text-anchor="middle">ROS node</text><rect class="head" x="968" y="6" width="184" height="58" rx="3"/><text class="htitle" x="1060" y="31" text-anchor="middle">Robot</text><text class="hsub" x="1060" y="51" text-anchor="middle">gbplanner + sensors</text><rect class="frame loop" x="660" y="132" width="492" height="92"/><text class="guard" x="736" y="143">[mission: gbplanner explores and inspects]</text><line class="msg" x1="1054" y1="178" x2="825" y2="178"/><path class="headfill" d="M816,178 l11,-5.5 v11 z"/><text class="lbl" x="935.0" y="170" text-anchor="middle"><tspan class="num">10  </tspan><tspan class="mono">/gbplanner_path</tspan>, odometry, homing</text><line class="msg" x1="1054" y1="208" x2="825" y2="208"/><path class="headfill" d="M816,208 l11,-5.5 v11 z"/><text class="lbl" x="935.0" y="200" text-anchor="middle"><tspan class="num">11  </tspan><tspan class="mono">/autoassess/findings</tspan> (detections, JSON)</text><g class="frame loop"><path style="fill:var(--panel, #fff)" d="M660,132 h58 v12 l-8,9 h-50 z"/></g><text class="tagtxt" x="668" y="147">loop</text><path class="msg" d="M816,248 h30 v18 h-20"/><path class="headfill" d="M816,266 l11,-5.5 v11 z"/><text class="lbl" x="796" y="261" text-anchor="end"><tspan class="num">12  </tspan>mission end detected (homing + quiet + still)</text><line class="msg" x1="816" y1="294" x2="1045" y2="294"/><path class="headfill" d="M1054,294 l-11,-5.5 v11 z"/><text class="lbl" x="935.0" y="286" text-anchor="middle"><tspan class="num">13  </tspan><tspan class="mono">generate_mesh</tspan> → save map PLY</text><line class="msg" x1="804" y1="324" x2="575" y2="324"/><path class="headfill" d="M566,324 l11,-5.5 v11 z"/><text class="lbl" x="685.0" y="316" text-anchor="middle"><tspan class="num">14  </tspan>upload mesh + files (CogniteFiles)</text><line class="msg" x1="804" y1="354" x2="575" y2="354"/><path class="headfill" d="M566,354 l11,-5.5 v11 z"/><text class="lbl" x="685.0" y="346" text-anchor="middle"><tspan class="num">15  </tspan>create campaign → <tspan class="mono">Complete</tspan></text><line class="msg" x1="804" y1="384" x2="575" y2="384"/><path class="headfill" d="M566,384 l11,-5.5 v11 z"/><text class="lbl" x="685.0" y="376" text-anchor="middle"><tspan class="num">16  </tspan>create findings plan (<tspan class="mono">Draft</tspan>)</text><line class="msg" x1="804" y1="422" x2="575" y2="422"/><path class="headfill" d="M566,422 l11,-5.5 v11 z"/><text class="lbl" x="685.0" y="414" text-anchor="middle"><tspan class="num">17  </tspan>dss worker (ROS-launched): build 3D models</text><line class="msg" x1="96" y1="460" x2="305" y2="460"/><path class="headfill" d="M314,460 l-11,-5.5 v11 z"/><text class="lbl" x="205.0" y="452" text-anchor="middle"><tspan class="num">18  </tspan>Review campaign + findings plan</text><line class="msg" x1="326" y1="490" x2="545" y2="490"/><path class="headfill" d="M554,490 l-11,-5.5 v11 z"/><text class="lbl" x="440.0" y="482" text-anchor="middle"><tspan class="num">19  </tspan>stream 3D model; edit campaign/plan</text><line class="msg" x1="96" y1="520" x2="305" y2="520"/><path class="headfill" d="M314,520 l-11,-5.5 v11 z"/><text class="lbl" x="205.0" y="512" text-anchor="middle"><tspan class="num">20  </tspan>Findings plan → <tspan class="mono">Ready</tspan>: next mission</text></svg></div>
+      <aside class="notes"><p>During the mission the bridge only listens: gbplanner's own topics plus your detection stack's findings. Mission end is detected (homing, then quiet, then still), and the bridge uploads the map, creates the campaign and turns the collected findings into a Draft plan. The ROS-launched dss worker builds the 3D models. The inspector reviews and the loop closes: marking the findings plan Ready starts the next mission. Marking the plan Complete only when every task was inspected is the convention the sandbox uses; it's an open question whether you want an InProgress plan state instead (PRD §4.3).</p></aside>
+    </section>
+
+    <!-- demo runbook -->
+    <section class="slide dense" data-phase="all">
+      <div class="rail"><span class="on">Plan</span><i class="sep"></i><span class="on">Fly</span><i class="sep"></i><span class="on">Upload</span><i class="sep"></i><span class="on">Review</span><span class="clock">09:20</span></div>
+      <h2>The live demo, step by step</h2>
+      <div class="cols w-6-4 grow">
+        <div class="spec-wrap"><table class="spec" style="font-size:calc(var(--u)*1.06)">
+          <thead><tr><th>Step</th><th>Who / what</th><th>Watch</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Mark the plan <b>Ready</b></td><td>Plans tab</td></tr>
+            <tr><td>2</td><td>Bridge follows it (~7 s)</td><td><code>rostopic echo /autoassess/plan_id</code></td></tr>
+            <tr><td>3</td><td>Targets + reference map appear</td><td><code>/autoassess/inspection_targets</code>, <code>/ballast_tank/pointcloud</code></td></tr>
+            <tr><td>4</td><td>Mission flies (gbplanner / stub)</td><td><code>/gbplanner_path</code>, rviz</td></tr>
+            <tr><td>5</td><td>Detections published</td><td><code>rostopic pub /autoassess/findings …</code></td></tr>
+            <tr><td>6</td><td>Mission end → auto upload</td><td><code>/autoassess/upload_status</code> → complete</td></tr>
+            <tr><td>7</td><td>Campaign + findings Draft plan in CDF</td><td>Viewer: Layers + Plans tab</td></tr>
+            <tr><td>8</td><td><code>dss worker</code> builds models</td><td>Viewer: notice → streamed mesh</td></tr>
+            <tr><td>9</td><td>Findings plan → <b>Ready</b></td><td>Bridge switches: loop closed</td></tr>
+          </tbody>
+        </table></div>
+        <div class="shot">__IMG_demo__</div>
+      </div>
+      <p class="caption">No robot? The same loop runs against a stub gbplanner in Docker: <code>autoassess_bridge/e2e/full_loop.sh</code>.</p>
+      <aside class="notes"><p>The backbone of the session. Run it for real: mark Ready, show the topics, publish two findings by hand, let the stub mission end, then the viewer: campaign, findings plan, model. Times from our run: Ready→topics 7 s; upload ≈50 s for a 99 MB mesh; model build ≈5 min — talk through the sandbox while it builds.</p></aside>
+    </section>
+
+
+    <!-- 5 -->
+    <section class="slide dense" data-phase="fly">
+      <div class="rail"><span>Plan</span><i class="sep"></i><span class="on">Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">09:30</span></div>
+      <h2>Hardware and environment</h2>
+      <div class="cols grow" style="--n:3">
+        <div class="card">
+          <h3>Ground station <span class="tag">install once</span></h3>
+          <ul class="clean">
+            <li>ROS 1 Noetic (Python 3.8) for <code>autoassess_bridge</code></li>
+            <li><code>uv</code> + Python 3.12 checkout of the AutoAssess SDK for <code>dss worker</code> (one <code>roslaunch autoassess_full.launch</code> starts both)</li>
+            <li>Outbound HTTPS (443) to <code>&lt;cluster&gt;.cognitedata.com</code> and the login provider</li>
+            <li>CDF service-account credentials in a git-ignored <code>.env</code>; uploads need write access</li>
+            <li>Disk for maps and meshes: a single mesh can be 100–270 MB</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Drone and sensors <span class="tag">derived</span></h3>
+          <ul class="clean">
+            <li>Localise in the <b>reference map frame</b> of the plan's <code>mapExternalId</code></li>
+            <li>3D capture: mesh (PLY, per-vertex RGB) and/or point cloud (PCD)</li>
+            <li>RGB camera with known intrinsics and body→camera extrinsic</li>
+            <li>Pose log at image timestamps (TUM format)</li>
+            <li>UT thickness gauge for <code>ndt_thickness</code> tasks</li>
+          </ul>
+        </div>
+        <div class="card">
+          <h3>Accuracy and reviewers <span class="tag">from the PRD</span></h3>
+          <ul class="clean">
+            <li><b>KO-5:</b> &lt; 1 cm relative accuracy of defect/NDT registration</li>
+            <li><b>NFR-04:</b> always cloud-connected at upload time, no offline mode</li>
+            <li><b>NFR-05:</b> reviewers need Chrome/Edge/Firefox with WebGL 2</li>
+            <li><b>KO-7:</b> demonstrated on bulk carrier, container ship and tanker</li>
+          </ul>
+        </div>
+      </div>
+      <div class="flow-states"><span class="tbd"><b>TBD partner</b></span><span class="muted">Onboard compute · link between drone and ground station (tether, Wi-Fi, SD card) · positioning accuracy achieved in a tank · who converts sensor output to PLY/PCD/TUM</span></div>
+      <aside class="notes"><p>Left column is what the code requires today. Middle column is what the upload formats imply about the sensors. Right column quotes the PRD targets. The hatched row is what we need from you: ask each team to fill it in on the open-questions slide.</p></aside>
+    </section>
+
+    <!-- 6 -->
+    <section class="slide" data-phase="plan">
+      <div class="rail"><span class="on">Plan</span><i class="sep"></i><span>Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">09:40</span></div>
+      <h2>Input: <code>plan.json</code></h2>
+      <div class="cols w-6-4 grow">
+<pre class="code">{
+  <span class="k">"planExternalId"</span>: <span class="s">"plan-6c1e…"</span>,
+  <span class="k">"name"</span>: <span class="s">"Tank 3 follow-up"</span>,
+  <span class="k">"areaName"</span>: <span class="s">"BWT 3P"</span>,
+  <span class="k">"mapExternalId"</span>: <span class="s">"result-9ab2…"</span>,  <span class="c">// frame of all coordinates</span>
+  <span class="k">"tasks"</span>: [
+    { <span class="k">"id"</span>: <span class="s">"task-…"</span>, <span class="k">"kind"</span>: <span class="s">"element"</span>,
+      <span class="k">"inspectionType"</span>: <span class="s">"visual"</span>,
+      <span class="k">"targetElement"</span>: { <span class="k">"type"</span>: <span class="s">"longitudinal"</span>,
+                         <span class="k">"center"</span>: [4.17, 0.24, 0.84] } },
+    { <span class="k">"id"</span>: <span class="s">"task-…"</span>, <span class="k">"kind"</span>: <span class="s">"region"</span>,
+      <span class="k">"inspectionType"</span>: <span class="s">"ndt_thickness"</span>,
+      <span class="k">"position3d"</span>: [2.20, 1.09, 0.92],
+      <span class="k">"normalVector"</span>: [0.0, -1.0, 0.0],
+      <span class="k">"radiusM"</span>: 0.3 }
+  ]
+}</pre>
+        <div class="stack">
+          <div class="card"><h3>Tasks are an unordered set</h3><p>The drone decides the order. The sandbox uses nearest-neighbour as an example.</p></div>
+          <div class="card"><h3>Two kinds of task</h3><p><b>element</b>: inspect a structural element at its centre point. <b>region</b>: a surface point with outward normal and radius.</p></div>
+          <div class="card"><h3>Findings go the other way</h3><p>Publish detections as JSON on <code>/autoassess/findings</code>: <code>{"id","x","y","z","nx","ny","nz","radius","inspection_type","class","confidence","description"}</code> — only <code>x,y,z</code> required. At mission end they become a Draft plan for review.</p></div>
+        </div>
+      </div>
+      <aside class="notes"><p>This is the whole input. Metres, map frame. Element tasks only carry a centre point, no bounding box (PRD OQ-10), so ask whether a centre is enough to plan a viewpoint. The schema is signed off with WP4/WP7 under OQ-5: this session is the place to object.</p></aside>
+    </section>
+
+    <!-- 7 -->
+    <section class="slide" data-phase="all">
+      <div class="rail"><span class="on">Plan</span><i class="sep"></i><span class="on">Fly</span><i class="sep"></i><span class="on">Upload</span><i class="sep"></i><span class="on">Review</span><span class="clock">09:48</span></div>
+      <h2>User interactions</h2>
+      <div class="roles grow">
+        <div class="role web">
+          <div class="tag">Inspector · before</div>
+          <h3>Plans the mission</h3>
+          <div class="where">Fusion → AutoAssess</div>
+          <ol>
+            <li>Open vessel → area → 3D viewer</li>
+            <li>Create a plan, choose the reference map</li>
+            <li>Click elements or surfaces, add as tasks</li>
+            <li>Mark the plan <span class="pill ready">Ready</span></li>
+          </ol>
+        </div>
+        <div class="role gs">
+          <div class="tag">Bridge + robot · automatic</div>
+          <h3>Runs itself</h3>
+          <div class="where">roslaunch autoassess_full.launch (once)</div>
+          <ol>
+            <li>Bridge publishes the newest Ready plan, targets and reference map</li>
+            <li>gbplanner flies; your stack publishes findings on <code>/autoassess/findings</code></li>
+            <li>Mission end detected → map uploaded, campaign created <span class="pill done">Complete</span></li>
+            <li>Findings become a <span class="pill draft">Draft</span> plan; <code>dss worker</code> builds the 3D models</li>
+          </ol>
+        </div>
+        <div class="role">
+          <div class="tag">Reviewer · after</div>
+          <h3>Reviews the result</h3>
+          <div class="where">Fusion → AutoAssess</div>
+          <ol>
+            <li>Toggle mesh, point clouds, NDT, images per campaign</li>
+            <li>Campaign report: stats, NDT table, images</li>
+            <li>Triage defects</li>
+            <li>Accept suggestions → next Draft plan</li>
+          </ol>
+        </div>
+      </div>
+      <aside class="notes"><p>Inspector and reviewer are often the same person. Nobody operates a terminal per mission: the ground station runs one roslaunch at boot. The CLI still exists as a manual fallback and for debugging.</p></aside>
+    </section>
+
+    <!-- 8 -->
+    <section class="slide" data-phase="upload">
+      <div class="rail"><span>Plan</span><i class="sep"></i><span>Fly</span><i class="sep"></i><span class="on">Upload</span><i class="sep"></i><span>Review</span><span class="clock">09:53</span></div>
+      <h2>Output: what the mission leaves behind (uploaded automatically)</h2>
+      <div class="spec-wrap grow">
+        <table class="spec">
+          <thead><tr><th>File</th><th>Becomes in CDF</th><th>Format notes</th></tr></thead>
+          <tbody>
+            <tr><td><code>*.ply</code></td><td>Mesh on the campaign, then a streamed 3D model</td><td>Binary or ASCII; per-vertex RGB (camera colour), optional face colours (segments)</td></tr>
+            <tr><td><code>*.pcd</code></td><td>Point cloud on the campaign, with a label</td><td>PCL PCD; a <code>label</code> field colours points</td></tr>
+            <tr><td><code>*.csv</code></td><td><code>NdtMeasurement</code> nodes</td><td><code>timestamp,thickness,x,y,z</code>: timestamp in <b>ns</b>, thickness in <b>metres</b></td></tr>
+            <tr><td><code>ssg.yaml</code></td><td><code>StructuralElement</code> nodes on the area</td><td>Scene graph: manhole, longitudinal, wall, compartment</td></tr>
+            <tr><td><code>metrics.yaml</code></td><td><code>CampaignMetric</code> nodes</td><td>Decimal or percentage values</td></tr>
+            <tr><td><code>tum/</code></td><td><code>DroneImage</code> nodes + PNG files</td><td><code>rgb.txt</code>, <code>groundtruth.txt</code> (tx ty tz qx qy qz qw), <code>sensor.yaml</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">All coordinates in the reference map frame. At mission end the bridge uploads the gbplanner map + the <code>mission_dir</code> files, creates the campaign (<span class="pill done">Complete</span>) and a findings <span class="pill draft">Draft</span> plan. CSV/ssg/metrics and images still go through <code>dss campaign upload</code> for now. Per-task mission results are not reported back — only the campaign links to the plan.</p>
+      <aside class="notes"><p>The two classic mistakes from the tutorial: CSV timestamps must be nanoseconds, thickness in metres. And every upload creates new files, so re-running duplicates them.</p></aside>
+    </section>
+
+    <!-- 9 -->
+    <section class="slide" data-phase="fly">
+      <div class="rail"><span>Plan</span><i class="sep"></i><span class="on">Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">09:58</span></div>
+      <h2>Reality check: how do tasks reach the drone?</h2>
+      <div class="cols grow">
+        <div class="stack">
+          <p class="lede" style="font-size:calc(var(--u)*1.6)">Confined-space inspection drones such as Flyability Elios 3 and ScoutDI Scout 137 are flown by a pilot. We found no public API for uploading waypoints to either.</p>
+          <ul class="clean">
+            <li>Elios 3 data goes to Flyability Cloud, which offers REST APIs for the recorded data.</li>
+            <li>Scout 137 tags data to its position on a 3D map and uploads to Scout Portal after flight.</li>
+            <li>So <code>plan.json</code> may be a <b>pilot checklist</b> plus a post-flight import, not an autopilot program. Either way the bridge publishes the plan and reference map, and the post-flight upload is automatic.</li>
+          </ul>
+        </div>
+        <div class="stack">
+          <div class="big-q">Which one is your drone?</div>
+          <div class="card"><h3>A · Autonomous</h3><p>Your software reads <code>plan.json</code> and calls something like <code>goto(pose)</code> / <code>inspect()</code>. The sandbox's <code>sim_drone</code> is shaped for this.</p></div>
+          <div class="card"><h3>B · Pilot-flown</h3><p>Show tasks to the pilot, then convert the vendor export (cloud API, SD card) into the mission folder before <code>dss campaign upload</code>.</p></div>
+        </div>
+      </div>
+      <aside class="notes"><p>Based on public vendor pages only; ask the teams to correct us. Either path ends in the same mission folder, which is why the output contract matters more than the flight interface.</p></aside>
+    </section>
+
+    <!-- 10 -->
+    <section class="slide" data-phase="all">
+      <div class="rail"><span class="on">Plan</span><i class="sep"></i><span class="on">Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">10:00</span></div>
+      <h2>The Drone Sandbox</h2>
+      <div class="cols w-4-6 grow">
+        <div class="stack">
+          <p>Python runs in your browser (Pyodide). No install, no credentials.</p>
+          <ul class="clean">
+            <li><code>uidss</code>: the <b>same API</b> as the real ground-station SDK, reading the real project, read-only</li>
+            <li><code>sim_drone = SimDrone()</code>: a simulated drone you drive with poses</li>
+            <li>Task panel shows each task's state during the flight</li>
+            <li>Marking the plan Complete is <b>simulated</b>. Nothing is written to CDF.</li>
+          </ul>
+          <div class="card"><div class="tag">Open it</div><p class="mono" style="font-size:calc(var(--u)*1.05);word-break:break-all">__SANDBOX_URL__</p></div>
+        </div>
+        <div class="shot">__IMG_overview__</div>
+      </div>
+      <aside class="notes"><p>Everyone opens the link now. Data source dropdown top right: the CDF project (live, read-only) or bundled demo data.</p></aside>
+    </section>
+
+    <!-- 11 -->
+    <section class="slide" data-phase="plan">
+      <div class="rail"><span class="on">Plan</span><i class="sep"></i><span>Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">10:02</span></div>
+      <h2>Sandbox: what the bridge does at step 4 — fetch and check the plan</h2>
+      <div class="cols grow">
+<pre class="code"><span class="k">from</span> uidss <span class="k">import</span> UidssClient
+
+client = UidssClient.from_env()
+<span class="k">for</span> vessel <span class="k">in</span> client.vessels.list():
+    <span class="k">for</span> area <span class="k">in</span> client.areas.list(vessel.space, vessel.external_id):
+        <span class="k">for</span> p <span class="k">in</span> client.plans.list(area.space, area.external_id):
+            print(p.status, p.name, p.external_id)
+
+<span class="c"># exactly what `dss plan download` writes</span>
+client.plans.download(p.space, p.external_id,
+                      area.name, Path(<span class="s">"plans/p.json"</span>))
+
+<span class="c"># your checks: pose present, inside the area,</span>
+<span class="c"># unit normal, reachable…</span></pre>
+        <div class="shot">__IMG_verify__</div>
+      </div>
+      <p class="caption">Examples 1 and 2. On the real project, the verify example flags a Draft task outside its area bounds.</p>
+      <aside class="notes"><p>This code runs unchanged on the ground station with the real SDK. Verification is where partner knowledge lives: reachability, stand-off distance, sensor limits.</p></aside>
+    </section>
+
+    <!-- 12 -->
+    <section class="slide" data-phase="fly">
+      <div class="rail"><span>Plan</span><i class="sep"></i><span class="on">Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">10:05</span></div>
+      <h2>Sandbox: the mission (step 5), flown with poses</h2>
+      <div class="cols grow">
+__CODE_fly__
+        <div class="shot">__IMG_inflight__</div>
+      </div>
+      <p class="caption">The task panel moves each task through pending → en route → inspecting → inspected (or skipped, with the reason).</p>
+      <aside class="notes"><p>The mission is the plan converted to poses; here the ground station drives it step by step so you can see it. On your drone the same loop runs onboard. Replace each sim_drone call with your drone's command. Pose is x, y, z in the map frame plus roll, pitch, yaw.</p></aside>
+    </section>
+
+    <!-- 13 -->
+    <section class="slide" data-phase="upload">
+      <div class="rail"><span>Plan</span><i class="sep"></i><span>Fly</span><i class="sep"></i><span class="on">Upload</span><i class="sep"></i><span>Review</span><span class="clock">10:08</span></div>
+      <h2>Sandbox: mission end (step 6) — upload and close</h2>
+      <div class="cols w-4-6 grow">
+        <div class="stack">
+          <div class="flow-states"><span class="pill ready">Ready</span><span class="arrow">→</span><span class="muted">mission</span><span class="arrow">→</span><span class="pill done">Complete</span></div>
+          <p>After landing, the example calls <code>client.plans.update_status(…, "Complete")</code>. In the sandbox this only changes the local copy, and the console says <i>not written to CDF</i>.</p>
+          <p>On the ground station, <code>dss campaign upload</code> runs first: the mission folder becomes a campaign, and then the campaign and the plan are marked Complete.</p>
+          <p class="muted">Tasks have no status in the data model. Per-task progress lives in the drone, and in the sandbox's task panel.</p>
+        </div>
+        <div class="shot">__IMG_landed__</div>
+      </div>
+      <aside class="notes"><p>Ask: do you need to report per-task progress to CDF during the mission, or is plan-level Ready → Complete enough? That's PRD §4.3 again.</p></aside>
+    </section>
+
+    <!-- 14 -->
+    <section class="slide" data-phase="fly">
+      <div class="rail"><span>Plan</span><i class="sep"></i><span class="on">Fly</span><i class="sep"></i><span>Upload</span><i class="sep"></i><span>Review</span><span class="clock">10:10</span></div>
+      <h2>What you implement, what the sandbox fakes</h2>
+      <div class="spec-wrap grow">
+__TABLE_api__
+      </div>
+      <p class="muted">Hands-on (5 min): open example 4, change the order or the stand-off, and make the drone skip a task on purpose. Then write the same loop against your own drone's SDK.</p>
+      <aside class="notes"><p>Give them five minutes. Walk the room; the common error is forgetting to import SimDrone.</p></aside>
+    </section>
+
+    <!-- 15 -->
+    <!-- app deployment -->
+    <section class="slide dense" data-phase="">
+      <div class="rail"><span class="clock">09:58</span></div>
+      <h2>App deployment: how a viewer version reaches users</h2>
+      <div class="cols grow" style="--n:2">
+        <div class="stack">
+          <div class="card"><h3>1 · Deploy a draft</h3><p><code>npx @cognite/cli apps deploy</code> uploads the build as a <b>DRAFT</b> of the version in <code>app.json</code> (<code>versionTag</code>). Drafts are invisible to users and open only via a <code>customAppVersion=&lt;tag&gt;</code> link — that's how our PRs link test builds.</p></div>
+          <div class="card"><h3>2 · Sign</h3><p><code>apps sign</code>: a developer signature is required before publishing (dev projects need no certification).</p></div>
+          <div class="card"><h3>3 · Publish · 4 · Activate</h3><p><code>apps publish</code> makes the version visible; <code>apps activate</code> makes it the default for users. Every step is explicit, so a bad build never reaches inspectors by accident.</p></div>
+        </div>
+        <div class="stack">
+          <ul class="clean">
+            <li><b>Today:</b> the Reveal viewer (0.1.0-alpha.1) and the Drone Sandbox (0.0.1) are <b>drafts</b>; the active viewer version is untouched.</li>
+            <li><b>Login once:</b> <code>npx @cognite/cli auth login</code>; deploys then run non-interactively.</li>
+            <li><b>Quirks we hit:</b> stale <code>.cognite-bundles/</code> packages get re-uploaded unless deleted; App Hosting rejects archive files (.zip/.bin) — the sandbox embeds Python's stdlib in its worker because of this.</li>
+            <li><b>Published versions are immutable</b> — bump <code>versionTag</code> per release; drafts may be overwritten.</li>
+          </ul>
+        </div>
+      </div>
+      <aside class="notes"><p>Answers "how do changes reach the inspectors": PR → draft link for testing → sign/publish/activate when accepted. Nobody tests in production.</p></aside>
+    </section>
+
+    <section class="slide" data-phase="">
+      <div class="rail"><span class="clock">10:12</span></div>
+      <h2>We need your answers</h2>
+      <div class="cols grow" style="--n:2">
+        <ul class="clean">
+          <li><b>Findings topic</b>: is JSON on <code>/autoassess/findings</code> the right interface for your detection stack?</li>
+          <li><b>Mission end</b>: could gbplanner publish a latched <code>mission_complete</code>? Today the bridge guesses (homing + quiet + still).</li>
+          <li><b>Global bound</b>: with <code>use_z_val=true</code> the upper z limit is never applied — bug? And should the bridge grow a box that excludes the robot's position?</li>
+          <li><b>Frames &amp; types</b>: is <code>world</code> the right default frame, and <code>PoseArray</code> the right type for targets?</li>
+          <li><b>plan.json / OQ-5</b>: does the task shape fit what your robot consumes?</li>
+        </ul>
+        <div class="stack">
+          <div class="card"><div class="tag">Tutorial</div><p class="mono">docs/tutorial/ in the repo</p></div>
+          <div class="card"><div class="tag">Ground-station SDK</div><p class="mono">sdk/ · <code>uv run dss --help</code></p></div>
+          <div class="card"><div class="tag">Sandbox</div><p class="mono" style="word-break:break-all">__SANDBOX_URL__</p></div>
+        </div>
+      </div>
+      <aside class="notes"><p>Collect answers per team, ideally in writing. These close OQ-5 and decide whether we change the data model after integration week.</p></aside>
+    </section>
+
+  </div>
+
+  <div class="controls" id="controls">
+    <button type="button" id="prev" aria-label="Previous slide">← Prev</button>
+    <button type="button" id="next" aria-label="Next slide">Next →</button>
+    <span class="count" id="count">1 / 17</span>
+    <span class="spacer"></span>
+    <button type="button" id="toggle-notes" aria-pressed="false">Speaker notes (N)</button>
+    <span>← → keys · F fullscreen</span>
+  </div>
+  <div class="notes-panel" id="notes" hidden><h4>Speaker notes</h4><div id="notes-body"></div></div>
+</div>
+
+<script>
+(() => {
+  const slides = [...document.querySelectorAll('.slide')];
+  const count = document.getElementById('count');
+  const notes = document.getElementById('notes');
+  const notesBody = document.getElementById('notes-body');
+  const toggle = document.getElementById('toggle-notes');
+  let i = 0;
+  try { const saved = Number(sessionStorage.getItem('deck-slide')); if (saved >= 0 && saved < slides.length) i = saved; } catch (e) {}
+  const fromHash = Number((location.hash.match(/^#(\d+)$/) || [])[1]);
+  if (fromHash >= 1 && fromHash <= slides.length) i = fromHash - 1;
+
+  function show(n) {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    slides.forEach((s, k) => s.classList.toggle('is-current', k === i));
+    count.textContent = `${i + 1} / ${slides.length}`;
+    const aside = slides[i].querySelector('aside.notes');
+    notesBody.innerHTML = aside ? aside.innerHTML : '<p>No notes.</p>';
+    try { sessionStorage.setItem('deck-slide', String(i)); } catch (e) {}
+  }
+  function setNotes(on) {
+    notes.hidden = !on;
+    toggle.setAttribute('aria-pressed', String(on));
+  }
+  document.getElementById('prev').addEventListener('click', () => show(i - 1));
+  document.getElementById('next').addEventListener('click', () => show(i + 1));
+  toggle.addEventListener('click', () => setNotes(notes.hidden));
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest && e.target.closest('input, textarea')) return;
+    if (['ArrowRight', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); show(i + 1); }
+    else if (['ArrowLeft', 'PageUp'].includes(e.key)) { e.preventDefault(); show(i - 1); }
+    else if (e.key === 'Home') show(0);
+    else if (e.key === 'End') show(slides.length - 1);
+    else if (e.key === 'n' || e.key === 'N') setNotes(notes.hidden);
+    else if (e.key === 'f' || e.key === 'F') { const el = document.documentElement; if (!document.fullscreenElement && el.requestFullscreen) el.requestFullscreen().catch(() => {}); else if (document.exitFullscreen) document.exitFullscreen().catch(() => {}); }
+  });
+  show(i);
+})();
+</script>
