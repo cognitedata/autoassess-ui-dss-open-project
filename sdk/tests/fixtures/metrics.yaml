@@ -1,0 +1,7 @@
+metrics:
+  - name: "Coverage"
+    value: 91.3
+    unit: percentage
+  - name: "Corrosion rate"
+    value: 0.0042
+    unit: decimal

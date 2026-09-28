@@ -1,0 +1,15 @@
+@import '@cognite/aura/styles.source.css';
+
+@source '../node_modules/@cognite/aura/dist/components';
+
+/* The Aura Input component uses a `filled:` variant to switch input text from
+   text-muted-foreground to text-foreground once the user types. The variant
+   selector is referenced in @cognite/aura@0.1.5 but not defined in the package,
+   so we provide it here. */
+@custom-variant filled (&:not(:placeholder-shown));
+
+:root {
+  --font-inter: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-source-code-pro: "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
