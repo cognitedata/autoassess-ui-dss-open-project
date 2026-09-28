@@ -327,7 +327,7 @@ describe(ViewerPage.name, () => {
     expect(vi.mocked(useCampaignCadModels)).toHaveBeenCalledWith([{ externalId: 'test-campaign', cdfFileIds: [42] }]);
   });
 
-  it('says dss worker is building the 3D model when a mesh has no CAD model yet', async () => {
+  it('says the mesh is waiting for a dss worker when it has no CAD model yet', async () => {
     const { useCampaignCadModels } = await import('./reveal/useCampaignCadModels');
     vi.mocked(useCampaignCadModels).mockReturnValueOnce(
       makeSuccessResult({ models: [], meshesWithoutModel: [{ campaignExternalId: 'test-campaign', fileId: 42 }] }),
@@ -335,8 +335,8 @@ describe(ViewerPage.name, () => {
 
     renderViewerPage(mockDeps);
 
-    expect(screen.getByText('3D model not built yet')).toBeInTheDocument();
-    expect(screen.getByText(/being built by/)).toBeInTheDocument();
+    expect(screen.getByText('3D model not ready yet')).toBeInTheDocument();
+    expect(screen.getByText(/waiting for a/)).toBeInTheDocument();
     expect(screen.getByText('dss campaign build-3d-model --campaign test-campaign')).toBeInTheDocument();
     expect(screen.queryByTestId('ply-viewer-container')).toBeNull();
   });
