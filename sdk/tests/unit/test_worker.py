@@ -145,6 +145,18 @@ class TestBackoff:
 
         assert len(env.builds) == 5
 
+    def test_gives_up_on_a_mesh_after_max_attempts(self) -> None:
+        env = _Env(meshes=[_mesh(1, "f1")], build_error=ValueError("bad PLY"))
+        worker = env.worker(backoff_base_s=1, backoff_max_s=1, max_attempts=3)
+
+        reports = []
+        for _ in range(5):
+            reports.append(worker.tick())
+            env.now += 2
+
+        assert len(env.builds) == 3
+        assert reports[-1].given_up == ["f1"]
+
     def test_one_bad_mesh_does_not_stop_the_others(self) -> None:
         env = _Env(meshes=[_mesh(1, "bad", created=1), _mesh(2, "good", created=2)])
         env.fail_for = {"bad"}

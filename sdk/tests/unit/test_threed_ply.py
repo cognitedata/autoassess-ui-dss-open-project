@@ -64,6 +64,31 @@ class TestReadBinaryPly:
         np.testing.assert_array_equal(binary_mesh.face_rgb, ascii_mesh.face_rgb)
 
 
+class TestTruncated:
+    def test_reports_a_truncated_ascii_vertex_block(self, tmp_path: Path) -> None:
+        path = _write_ascii(tmp_path, vertex_rgb=False, face_rgb=False)
+        text = path.read_text()
+        path.write_text(text[: text.index("1 1 0")])  # cut inside the vertex block
+
+        with pytest.raises(ValueError, match="truncated"):
+            read_ply(path)
+
+    def test_reports_a_truncated_ascii_face_block(self, tmp_path: Path) -> None:
+        path = _write_ascii(tmp_path, vertex_rgb=False, face_rgb=False)
+        text = path.read_text()
+        path.write_text(text[: text.rindex("3 3 4 5")])
+
+        with pytest.raises(ValueError, match="truncated"):
+            read_ply(path)
+
+    def test_reports_a_truncated_binary_file(self, tmp_path: Path) -> None:
+        path = _write_binary(tmp_path)
+        path.write_bytes(path.read_bytes()[:-5])
+
+        with pytest.raises(ValueError, match="truncated"):
+            read_ply(path)
+
+
 class TestUnsupported:
     def test_rejects_big_endian(self, tmp_path: Path) -> None:
         path = tmp_path / "be.ply"

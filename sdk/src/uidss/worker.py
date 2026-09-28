@@ -9,8 +9,9 @@ built, whether or not the file belongs to a campaign yet. Each tick:
 3. skip meshes a legacy campaign-keyed model already shows;
 4. build the rest one at a time, oldest first, and wait for CDF to process each.
 
-A build that fails is retried with exponential backoff, so one bad mesh can't make the worker
-loop on it; the others are still built. Nothing existing is modified or deleted.
+A build that fails is retried with exponential backoff and given up after ``max_attempts``
+(until the worker restarts), so one bad mesh can't make the worker loop on it; the others
+are still built. Nothing existing is modified or deleted.
 """
 
 from __future__ import annotations
@@ -49,6 +50,7 @@ class TickReport:
     built: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     backing_off: list[str] = field(default_factory=list)
+    given_up: list[str] = field(default_factory=list)  # failed max_attempts times; until restart
     covered_by_legacy: list[str] = field(default_factory=list)
     refreshed: list[str] = field(default_factory=list)
     with_model: int = 0
@@ -72,6 +74,7 @@ class ModelWorker:
         backoff_base_s: float = 60,
         backoff_max_s: float = 3600,
         wait_timeout_s: float = 1800,
+        max_attempts: int = 5,
     ) -> None:
         self._meshes = meshes
         self._campaigns = campaigns
@@ -82,6 +85,7 @@ class ModelWorker:
         self._backoff_base = backoff_base_s
         self._backoff_max = backoff_max_s
         self._wait_timeout = wait_timeout_s
+        self._max_attempts = max_attempts
         self._failures: dict[str, _Failure] = {}
 
     def tick(self) -> TickReport:
@@ -105,6 +109,9 @@ class ModelWorker:
                 report.covered_by_legacy.append(mesh.external_id)
                 continue
             failure = self._failures.get(mesh.external_id)
+            if failure is not None and failure.count >= self._max_attempts:
+                report.given_up.append(mesh.external_id)
+                continue
             if failure is not None and self._clock() < failure.next_attempt:
                 report.backing_off.append(mesh.external_id)
                 continue

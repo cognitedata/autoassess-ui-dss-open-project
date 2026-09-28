@@ -118,12 +118,20 @@ def _read_ascii(
     # read each block in one pass (newlines count as whitespace separators).
     body = np.frombuffer(data, dtype=np.uint8, offset=start)
     newlines = np.flatnonzero(body == ord("\n"))
+    if len(newlines) < vertex.count:
+        raise ValueError(
+            f"PLY is truncated: header says {vertex.count} vertices, file has {len(newlines)} rows"
+        )
     split = int(newlines[vertex.count - 1]) + 1 if vertex.count else 0
     vertex_block = data[start : start + split].decode("ascii")
     face_block = data[start + split :].decode("ascii")
     v = np.fromstring(vertex_block, sep=" ") if vertex.count else np.zeros(0)
     f = np.fromstring(face_block, sep=" ") if face.count else np.zeros(0)
     face_width = 4 + len(face.scalars)
+    if face.count and f.size < face.count * face_width and f.size % face_width == 0:
+        raise ValueError(
+            f"PLY is truncated: header says {face.count} faces, file has {f.size // face_width}"
+        )
     if face.count and f.size != face.count * face_width:
         raise ValueError("only triangle faces are supported (face rows have unexpected width)")
     return v.reshape(vertex.count, len(vertex.scalars)), f.reshape(face.count, face_width)
@@ -138,6 +146,14 @@ def _read_binary(
     npt.NDArray[np.generic],
 ]:
     vertex_dtype = np.dtype([(name, "<" + code) for name, code in vertex.scalars])
+    if face.list_prop is not None:
+        face_size = np.dtype(
+            [("_n", "<" + face.list_prop[1]), ("_idx", "<" + face.list_prop[2], (3,))]
+            + [(name, "<" + code) for name, code in face.scalars]
+        ).itemsize
+        expected = start + vertex.count * vertex_dtype.itemsize + face.count * face_size
+        if len(data) < expected:
+            raise ValueError(f"PLY is truncated: {len(data)} bytes, header needs {expected}")
     vertices = np.frombuffer(data, dtype=vertex_dtype, count=vertex.count, offset=start)
     if face.list_prop is None:
         raise ValueError("PLY face element has no vertex index list")

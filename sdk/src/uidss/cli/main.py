@@ -602,6 +602,8 @@ def _print_tick(report: TickReport) -> None:
         parts.append(f"shown by legacy campaign models {len(report.covered_by_legacy)}")
     if report.backing_off:
         parts.append(f"waiting to retry {len(report.backing_off)}")
+    if report.given_up:
+        parts.append(f"given up (restart the worker to retry) {len(report.given_up)}")
     console.print("  " + ", ".join(parts), highlight=False)
     for xid in report.built:
         console.print(f"  [green]built[/green] {xid}", highlight=False)
