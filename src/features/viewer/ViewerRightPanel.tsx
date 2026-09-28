@@ -1,5 +1,7 @@
 import { cn } from '../../lib/utils';
 
+import { EditCampaignDialog } from './campaigns/EditCampaignDialog';
+import type { EditCampaignViewModel } from './campaigns/useEditCampaignViewModel';
 import type { DefectDetection } from './DefectDetectionService';
 import { DefectsPanel } from './DefectsPanel';
 import { InspectionPlansPanel } from './InspectionPlansPanel';
@@ -13,6 +15,8 @@ export type RightPanelTab = 'layers' | 'plans' | 'defects';
 
 interface ViewerRightPanelProps {
   layerPanelViewModel: LayerPanelViewModel;
+  /** Edit-campaign / new-campaign dialog; omitted = campaigns are read-only here. */
+  editCampaignViewModel?: EditCampaignViewModel;
   inspectionPlansViewModel: InspectionPlansViewModel;
   defectsPanelViewModel: DefectsPanelViewModel;
   activeTab: RightPanelTab;
@@ -27,6 +31,7 @@ interface ViewerRightPanelProps {
 
 export function ViewerRightPanel({
   layerPanelViewModel,
+  editCampaignViewModel,
   inspectionPlansViewModel,
   defectsPanelViewModel,
   activeTab,
@@ -67,7 +72,13 @@ export function ViewerRightPanel({
         hidden={activeTab !== 'layers'}
         className="flex-1 overflow-y-auto"
       >
-        <LayerPanel viewModel={layerPanelViewModel} onViewReport={onViewReport} />
+        <LayerPanel
+          viewModel={layerPanelViewModel}
+          onViewReport={onViewReport}
+          onEditCampaign={editCampaignViewModel?.openEdit}
+          onNewCampaign={editCampaignViewModel?.openCreate}
+        />
+        {editCampaignViewModel && <EditCampaignDialog viewModel={editCampaignViewModel} />}
       </div>
 
       <div

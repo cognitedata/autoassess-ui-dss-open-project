@@ -14,6 +14,7 @@ import { AUTOASSESS_SPACE } from '../../shared/cdf/dataModel';
 import { useSetGroundPlane, useSetDefaultCameraPose } from '../areas/useMutateArea';
 
 import { AreaSettingsModal } from './AreaSettingsModal';
+import { useEditCampaignViewModel } from './campaigns/useEditCampaignViewModel';
 import { formatCameraParam, parseCameraParam } from './cameraParam';
 import type { CameraPose } from './cameraParam';
 import type { DefectDetection, DefectUpdates } from './DefectDetectionService';
@@ -116,6 +117,7 @@ export function ViewerPage() {
   );
 
   const plansViewModel = useInspectionPlansViewModel(AUTOASSESS_SPACE, areaId);
+  const editCampaignViewModel = useEditCampaignViewModel(AUTOASSESS_SPACE, areaId);
   const [selection, setSelection] = useState<SelectionHit | null>(null);
 
   const selectedImageCdfFileId = selection?.kind === 'image' ? selection.image.cdfFileId : null;
@@ -470,6 +472,7 @@ export function ViewerPage() {
         {/* Right panel — tabbed: Layers, Plans, Defects */}
         <ViewerRightPanel
           layerPanelViewModel={layerPanelViewModel}
+          editCampaignViewModel={editCampaignViewModel}
           inspectionPlansViewModel={plansViewModel}
           defectsPanelViewModel={defectsViewModel}
           activeTab={rightPanelTab}

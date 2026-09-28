@@ -184,6 +184,63 @@ describe(CdfCampaignCadModelService.name, () => {
   });
 });
 
+describe('CdfCampaignCadModelService.modelStatusForFiles', () => {
+  let nodes: NodeDefinition[];
+  let files: FileInfo[];
+  let retrieve: ReturnType<typeof vi.fn<CogniteClient['instances']['retrieve']>>;
+  let service: CdfCampaignCadModelService;
+
+  beforeEach(() => {
+    nodes = [];
+    files = [];
+    retrieve = vi.fn<CogniteClient['instances']['retrieve']>((request) => {
+      const wanted = new Set(request.items.map((i) => i.externalId));
+      return Promise.resolve({ items: nodes.filter((n) => wanted.has(n.externalId)) });
+    });
+    const retrieveFiles = vi.fn<CogniteClient['files']['retrieve']>((ids) => {
+      const wanted = new Set(ids.map((i) => ('id' in i ? i.id : -1)));
+      return Promise.resolve(files.filter((f) => wanted.has(f.id)));
+    });
+    service = new CdfCampaignCadModelService({ instances: { retrieve }, files: { retrieve: retrieveFiles } });
+  });
+
+  it("should report each file's own model state", async () => {
+    files = [fileInfo(11, 'f1'), fileInfo(12, 'f2'), fileInfo(13, 'f3'), fileInfo(14, 'f4')];
+    nodes = [
+      modelNode('f1-cad-model', 11), revisionNode('f1-cad-revision', 1, 'Done'),
+      modelNode('f2-cad-model', 12), revisionNode('f2-cad-revision', 2, 'Processing'),
+      modelNode('f3-cad-model', 13), revisionNode('f3-cad-revision', 3, 'Failed'),
+    ];
+
+    const statuses = await service.modelStatusForFiles([
+      { fileId: 11, campaignExternalId: 'result-1' },
+      { fileId: 12, campaignExternalId: 'result-1' },
+      { fileId: 13, campaignExternalId: null },
+      { fileId: 14, campaignExternalId: null },
+    ]);
+
+    expect(Object.fromEntries(statuses)).toEqual({ 11: 'ready', 12: 'processing', 13: 'failed', 14: 'none' });
+  });
+
+  it("should say a file is shown by its campaign's legacy model", async () => {
+    files = [fileInfo(11, 'f1', 100)];
+    nodes = [modelNode('result-1-cad-model', null, 200), revisionNode('result-1-cad-revision', 600)];
+
+    const statuses = await service.modelStatusForFiles([{ fileId: 11, campaignExternalId: 'result-1' }]);
+
+    expect(statuses.get(11)).toBe('campaign-model');
+  });
+
+  it('should not look up legacy models for files in no campaign', async () => {
+    files = [fileInfo(11, 'f1')];
+
+    await service.modelStatusForFiles([{ fileId: 11, campaignExternalId: null }]);
+
+    const requested = retrieve.mock.calls.flatMap((c) => c[0].items.map((i) => i.externalId));
+    expect(requested.sort()).toEqual(['f1-cad-model', 'f1-cad-revision']);
+  });
+});
+
 describe(derivedId.name, () => {
   it('should append the suffix', () => {
     expect(derivedId('f1', '-cad-model')).toBe('f1-cad-model');

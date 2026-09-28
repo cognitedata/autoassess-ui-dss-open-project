@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 
+import type { EditCampaignViewModel } from './campaigns/useEditCampaignViewModel';
+
 import type { DefectsPanelViewModel } from './useDefectsPanelViewModel';
 import type { InspectionPlansViewModel } from './useInspectionPlansViewModel';
 import type { LayerPanelViewModel } from './useLayerPanelViewModel';
@@ -216,4 +218,46 @@ describe(ViewerRightPanel.name, () => {
     );
     expect(screen.getByRole('button', { name: /view report/i })).toBeInTheDocument();
   });
+
+  it('opens the new-campaign dialog from the Layers tab when campaigns are editable', async () => {
+    const editVm = makeEditCampaignViewModel();
+    render(
+      <ViewerRightPanel
+        layerPanelViewModel={makeLayerPanelViewModel()}
+        editCampaignViewModel={editVm}
+        inspectionPlansViewModel={makePlansViewModel()}
+        defectsPanelViewModel={makeDefectsViewModel()}
+        activeTab="layers"
+        onTabChange={vi.fn()}
+        areaSpace="autoassess"
+        areaExternalId="area-1"
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'New campaign from files' }));
+
+    expect(editVm.openCreate).toHaveBeenCalled();
+  });
 });
+
+function makeEditCampaignViewModel(): EditCampaignViewModel {
+  return {
+    isOpen: false,
+    mode: 'edit',
+    title: '',
+    campaignDate: '',
+    setCampaignDate: vi.fn(),
+    dateError: null,
+    files: [],
+    isLoadingFiles: false,
+    filesError: null,
+    toggleFile: vi.fn(),
+    canSave: false,
+    save: vi.fn(() => Promise.resolve()),
+    isSaving: false,
+    saveError: null,
+    openEdit: vi.fn(),
+    openCreate: vi.fn(),
+    close: vi.fn(),
+  };
+}

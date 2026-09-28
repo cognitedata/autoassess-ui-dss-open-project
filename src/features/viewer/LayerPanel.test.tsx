@@ -409,4 +409,31 @@ describe(LayerPanel.name, () => {
     await userEvent.click(screen.getByRole('checkbox', { name: 'Structural elements' }));
     expect(onToggleStaticLayer).toHaveBeenCalledWith('SEMANTIC_SEG', false);
   });
+
+  describe('campaign editing', () => {
+    it('opens the edit dialog from the campaign menu', async () => {
+      const onEditCampaign = vi.fn();
+      render(<LayerPanel viewModel={makeViewModel({ campaigns: [makeCampaign()] })} onEditCampaign={onEditCampaign} />);
+
+      await userEvent.click(screen.getByRole('button', { name: 'Campaign 2024-09-15 options' }));
+      await userEvent.click(screen.getByRole('menuitem', { name: 'Edit campaign' }));
+
+      expect(onEditCampaign).toHaveBeenCalledWith('c1');
+    });
+
+    it('offers no campaign menu without an edit handler', () => {
+      render(<LayerPanel viewModel={makeViewModel({ campaigns: [makeCampaign()] })} />);
+
+      expect(screen.queryByRole('button', { name: 'Campaign 2024-09-15 options' })).toBeNull();
+    });
+
+    it('offers a new campaign from files, also when the area has no campaign yet', async () => {
+      const onNewCampaign = vi.fn();
+      render(<LayerPanel viewModel={makeViewModel({ isEmpty: true })} onNewCampaign={onNewCampaign} />);
+
+      await userEvent.click(screen.getByRole('button', { name: 'New campaign from files' }));
+
+      expect(onNewCampaign).toHaveBeenCalled();
+    });
+  });
 });

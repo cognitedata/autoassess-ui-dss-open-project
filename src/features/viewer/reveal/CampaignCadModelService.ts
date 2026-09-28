@@ -47,8 +47,13 @@ export interface CampaignCadModels {
   meshesWithoutModel: MeshWithoutModel[];
 }
 
+/** Model state of one mesh file, for the edit-campaign dialog. */
+export type FileModelStatus = 'ready' | 'processing' | 'failed' | 'campaign-model' | 'none';
+
 export interface CampaignCadModelService {
   listForCampaigns(campaigns: CampaignMeshes[]): Promise<CampaignCadModels>;
+  /** Per mesh file: its own model's state, else whether its campaign's legacy model shows it. */
+  modelStatusForFiles(files: { fileId: number; campaignExternalId: string | null }[]): Promise<Map<number, FileModelStatus>>;
 }
 
 const CAD_MODEL_VIEW = { type: 'view', space: 'cdf_cdm', externalId: 'CogniteCADModel', version: 'v1' } as const;
@@ -69,39 +74,77 @@ export function derivedId(base: string, suffix: string): string {
 
 type ParsedModel = Omit<CampaignCadModel, 'key' | 'campaignExternalId'> & { nodeId: string; createdTime: number };
 
+type ResolvedCampaign = {
+  campaign: string;
+  legacy: ParsedModel | undefined;
+  files: { fileId: number; own: ParsedModel | undefined; coveredByLegacy: boolean }[];
+};
+
 export class CdfCampaignCadModelService implements CampaignCadModelService {
   constructor(private readonly client: CadModelSdk) {}
 
   async listForCampaigns(campaigns: CampaignMeshes[]): Promise<CampaignCadModels> {
-    const withMeshes = campaigns.filter((c) => c.cdfFileIds.length > 0);
-    if (withMeshes.length === 0) return { models: [], meshesWithoutModel: [] };
-
-    const files = await this.retrieveFiles([...new Set(withMeshes.flatMap((c) => c.cdfFileIds))]);
-    const fileXids = [...new Set([...files.values()].map((f) => f.xid))];
-    const [perFile, legacy] = await Promise.all([
-      this.find(fileXids),
-      this.find(withMeshes.map((c) => c.externalId)),
-    ]);
-
     const models: CampaignCadModel[] = [];
     const meshesWithoutModel: MeshWithoutModel[] = [];
-    for (const campaign of withMeshes) {
-      const legacyModel = legacy.get(campaign.externalId);
+    for (const { campaign, files, legacy } of await this.resolve(campaigns, true)) {
       let showLegacy = false;
-      for (const fileId of campaign.cdfFileIds) {
-        const file = files.get(fileId);
-        const own = file ? perFile.get(file.xid) : undefined;
-        if (own) {
-          models.push(toCampaignModel(campaign.externalId, own));
-        } else if (legacyModel && (!file || (file.createdTime > 0 && file.createdTime <= legacyModel.createdTime))) {
-          showLegacy = true;
-        } else {
-          meshesWithoutModel.push({ campaignExternalId: campaign.externalId, fileId });
-        }
+      for (const { fileId, own, coveredByLegacy } of files) {
+        if (own) models.push(toCampaignModel(campaign, own));
+        else if (coveredByLegacy) showLegacy = true;
+        else meshesWithoutModel.push({ campaignExternalId: campaign, fileId });
       }
-      if (showLegacy && legacyModel) models.push(toCampaignModel(campaign.externalId, legacyModel));
+      if (showLegacy && legacy) models.push(toCampaignModel(campaign, legacy));
     }
     return { models, meshesWithoutModel };
+  }
+
+  async modelStatusForFiles(
+    files: { fileId: number; campaignExternalId: string | null }[],
+  ): Promise<Map<number, FileModelStatus>> {
+    const byCampaign = new Map<string, number[]>();
+    for (const { fileId, campaignExternalId } of files) {
+      const key = campaignExternalId ?? '';
+      byCampaign.set(key, [...(byCampaign.get(key) ?? []), fileId]);
+    }
+    const unassigned = byCampaign.get('') ?? [];
+    byCampaign.delete('');
+    const campaigns = [...byCampaign].map(([externalId, cdfFileIds]) => ({ externalId, cdfFileIds }));
+    const resolved = [
+      ...(await this.resolve(campaigns, true)),
+      ...(await this.resolve([{ externalId: '', cdfFileIds: unassigned }], false)),
+    ];
+    const statuses = new Map<number, FileModelStatus>();
+    for (const { files: entries } of resolved) {
+      for (const { fileId, own, coveredByLegacy } of entries) {
+        statuses.set(fileId, own ? ownStatus(own.status) : coveredByLegacy ? 'campaign-model' : 'none');
+      }
+    }
+    return statuses;
+  }
+
+  /** Per campaign and mesh file: the file's own model, or whether the legacy model covers it. */
+  private async resolve(campaigns: CampaignMeshes[], withLegacy: boolean): Promise<ResolvedCampaign[]> {
+    const withMeshes = campaigns.filter((c) => c.cdfFileIds.length > 0);
+    if (withMeshes.length === 0) return [];
+    const files = await this.retrieveFiles([...new Set(withMeshes.flatMap((c) => c.cdfFileIds))]);
+    const [perFile, legacy] = await Promise.all([
+      this.find([...new Set([...files.values()].map((f) => f.xid))]),
+      withLegacy ? this.find(withMeshes.map((c) => c.externalId)) : Promise.resolve(new Map<string, ParsedModel>()),
+    ]);
+    return withMeshes.map((campaign) => {
+      const legacyModel = legacy.get(campaign.externalId);
+      return {
+        campaign: campaign.externalId,
+        legacy: legacyModel,
+        files: campaign.cdfFileIds.map((fileId) => {
+          const file = files.get(fileId);
+          const own = file ? perFile.get(file.xid) : undefined;
+          const coveredByLegacy = !own && legacyModel !== undefined &&
+            (!file || (file.createdTime > 0 && file.createdTime <= legacyModel.createdTime));
+          return { fileId, own, coveredByLegacy };
+        }),
+      };
+    });
   }
 
   /** Numeric file id → CogniteFile external id + created time (classic files are left out). */
@@ -162,6 +205,12 @@ export class CdfCampaignCadModelService implements CampaignCadModelService {
 }
 
 // ---- Internal helpers ----
+
+function ownStatus(status: string): FileModelStatus {
+  if (status === 'Done') return 'ready';
+  if (status === 'Failed') return 'failed';
+  return 'processing';
+}
 
 function toCampaignModel(campaignExternalId: string, parsed: ParsedModel): CampaignCadModel {
   const { nodeId, createdTime: _createdTime, ...model } = parsed;

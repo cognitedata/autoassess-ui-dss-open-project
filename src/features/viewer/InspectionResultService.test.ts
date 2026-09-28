@@ -197,3 +197,65 @@ describe(CdfInspectionResultService.name, () => {
     await expect(service.listForArea('autoassess', 'area-01581')).rejects.toThrow('Network error');
   });
 });
+
+describe('CdfInspectionResultService.saveCampaigns', () => {
+  let upsert: ReturnType<typeof vi.fn<CogniteClient['instances']['upsert']>>;
+  let service: CdfInspectionResultService;
+
+  beforeEach(() => {
+    upsert = vi.fn<CogniteClient['instances']['upsert']>(() => Promise.resolve({ items: [] }));
+    service = new CdfInspectionResultService({ instances: { list: vi.fn(), upsert } });
+  });
+
+  it('should upsert every campaign write in one request', async () => {
+    await service.saveCampaigns([
+      { space: 'autoassess', externalId: 'result-b', campaignDate: '2026-09-28', cdfFileIds: [2], pcdFileIds: [], pcdFileLabels: [] },
+      { space: 'autoassess', externalId: 'result-a', cdfFileIds: [1], pcdFileIds: [5], pcdFileLabels: ['cloud'] },
+    ]);
+
+    expect(upsert).toHaveBeenCalledTimes(1);
+    const [request] = upsert.mock.calls[0];
+    expect(request.items.map((i) => i.externalId)).toEqual(['result-b', 'result-a']);
+    expect(request.items[0].sources?.[0]).toEqual({
+      source: { type: 'view', ...INSPECTION_RESULT_VIEW },
+      properties: { campaignDate: '2026-09-28', cdfFileIds: [2], pcdFileIds: [], pcdFileLabels: [] },
+    });
+    expect(request.items[1].sources?.[0].properties).toEqual({ cdfFileIds: [1], pcdFileIds: [5], pcdFileLabels: ['cloud'] });
+  });
+
+  it('should write area, status and createdBy for a new campaign', async () => {
+    await service.saveCampaigns([
+      {
+        space: 'autoassess',
+        externalId: 'result-new',
+        campaignDate: '2026-09-28',
+        cdfFileIds: [2],
+        pcdFileIds: [],
+        pcdFileLabels: [],
+        create: { areaSpace: 'autoassess', areaExternalId: 'area-1' },
+      },
+    ]);
+
+    const [request] = upsert.mock.calls[0];
+    expect(request.items[0].sources?.[0].properties).toMatchObject({
+      area: { space: 'autoassess', externalId: 'area-1' },
+      status: 'Complete',
+      createdBy: 'autoassess-web',
+      campaignDate: '2026-09-28',
+    });
+  });
+
+  it('should make no request when there is nothing to write', async () => {
+    await service.saveCampaigns([]);
+
+    expect(upsert).not.toHaveBeenCalled();
+  });
+
+  it('should propagate errors thrown by the SDK', async () => {
+    upsert.mockRejectedValue(new Error('403'));
+
+    await expect(
+      service.saveCampaigns([{ space: 'autoassess', externalId: 'r', cdfFileIds: [], pcdFileIds: [], pcdFileLabels: [] }]),
+    ).rejects.toThrow('403');
+  });
+});

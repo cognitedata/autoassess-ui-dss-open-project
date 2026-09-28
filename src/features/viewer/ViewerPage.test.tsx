@@ -116,6 +116,12 @@ vi.mock('./useDroneImages', async (importOriginal) => {
   };
 });
 
+// vi.mock: the edit-campaign view model runs React Query hooks against CDF; the page tests
+// only check that it reaches the right panel.
+vi.mock('./campaigns/useEditCampaignViewModel', () => ({
+  useEditCampaignViewModel: vi.fn(() => ({ isOpen: false, openEdit: vi.fn(), openCreate: vi.fn() })),
+}));
+
 vi.mock('./ViewerRightPanel', () => ({
   ViewerRightPanel: vi.fn(() => <div data-testid="viewer-right-panel" />),
 }));
@@ -355,6 +361,16 @@ describe(ViewerPage.name, () => {
     renderViewerPage(mockDeps);
 
     expect(screen.getByText(/being processed in CDF/)).toBeInTheDocument();
+  });
+
+  it('gives the right panel the edit-campaign view model of this area', async () => {
+    const { useEditCampaignViewModel } = await import('./campaigns/useEditCampaignViewModel');
+    const { ViewerRightPanel } = await import('./ViewerRightPanel');
+
+    renderViewerPage(mockDeps);
+
+    expect(vi.mocked(useEditCampaignViewModel)).toHaveBeenCalledWith('autoassess', 'area-01581');
+    expect(vi.mocked(ViewerRightPanel).mock.lastCall?.[0].editCampaignViewModel).toMatchObject({ isOpen: false });
   });
 
   it('renders SelectionPanel with null hit on initial load', async () => {

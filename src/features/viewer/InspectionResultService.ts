@@ -1,10 +1,13 @@
 import type { CogniteClient, NodeDefinition } from '@cognite/sdk';
+
 import {
   INSPECTION_RESULT_VIEW,
   INSPECTION_RESULT_CONTAINER,
   getContainerProperty,
   getViewKey,
 } from '../../shared/cdf/dataModel';
+
+import type { CampaignWrite } from './campaigns/campaignEdit';
 
 export type ResultStatus = 'InProgress' | 'Complete';
 
@@ -25,10 +28,42 @@ export interface InspectionResult {
 
 export interface InspectionResultService {
   listForArea(areaSpace: string, areaExternalId: string): Promise<InspectionResult[]>;
+  /** Upsert campaign nodes (date / file lists; area + status for new ones) in one request. */
+  saveCampaigns(writes: CampaignWrite[]): Promise<void>;
 }
 
+/** Only the part of the SDK this service needs — keeps test doubles honest. */
+export type InspectionResultSdk = { instances: Pick<CogniteClient['instances'], 'list' | 'upsert'> };
+
 export class CdfInspectionResultService implements InspectionResultService {
-  constructor(private readonly client: CogniteClient) {}
+  constructor(private readonly client: InspectionResultSdk) {}
+
+  async saveCampaigns(writes: CampaignWrite[]): Promise<void> {
+    if (writes.length === 0) return;
+    await this.client.instances.upsert({
+      items: writes.map((write) => ({
+        instanceType: 'node' as const,
+        space: write.space,
+        externalId: write.externalId,
+        sources: [
+          {
+            source: { type: 'view' as const, ...INSPECTION_RESULT_VIEW },
+            properties: {
+              ...(write.create && {
+                area: { space: write.create.areaSpace, externalId: write.create.areaExternalId },
+                status: 'Complete',
+                createdBy: 'autoassess-web',
+              }),
+              ...(write.campaignDate !== undefined && { campaignDate: write.campaignDate }),
+              cdfFileIds: write.cdfFileIds,
+              pcdFileIds: write.pcdFileIds,
+              pcdFileLabels: write.pcdFileLabels,
+            },
+          },
+        ],
+      })),
+    });
+  }
 
   async listForArea(areaSpace: string, areaExternalId: string): Promise<InspectionResult[]> {
     const response = await this.client.instances.list({

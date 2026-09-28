@@ -2,7 +2,7 @@ import type { CogniteClient } from '@cognite/sdk';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import type { ComponentType, ReactNode } from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { assert, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CampaignCadModel, CampaignCadModels, CampaignCadModelService } from './CampaignCadModelService';
 import {
@@ -18,7 +18,12 @@ describe(useCampaignCadModels.name, () => {
   let wrapper: ComponentType<{ children: ReactNode }>;
 
   beforeEach(() => {
-    service = { listForCampaigns: vi.fn(() => Promise.resolve(result([cadModel('result-1')]))) };
+    service = {
+      listForCampaigns: vi.fn(() => Promise.resolve(result([cadModel('result-1')]))),
+      modelStatusForFiles: vi.fn(() => {
+        assert.fail('Not used by this hook');
+      }),
+    };
     deps = { useCogniteSdk: () => ({}) as CogniteClient, createService: () => service };
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     wrapper = ({ children }) => (
