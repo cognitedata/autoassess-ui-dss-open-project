@@ -47,9 +47,13 @@ class UidssClient:
         )
 
     def __getattr__(self, name: str) -> Any:
+        # Always AttributeError (never SandboxReadOnlyError): hasattr()/getattr(..., default)
+        # and introspection only treat AttributeError as "attribute missing".
         if name in _UNAVAILABLE:
-            raise SandboxReadOnlyError(
+            raise AttributeError(
                 f"client.{name} is not available in the sandbox (it uploads to CDF or needs "
-                "local mission files). Use it on a real ground station."
+                "local mission files). Use it on a real ground station.",
+                name=name,
+                obj=self,
             )
-        raise AttributeError(name)
+        raise AttributeError(name, name=name, obj=self)

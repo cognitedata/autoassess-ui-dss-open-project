@@ -84,7 +84,8 @@ client.plans.download(space, plan_eid, area_name, Path("plans/p.json"))  # write
   **Reload** or switching the data source undoes it. Any other status, or a plan that wasn't
   flown and landed, raises `SandboxReadOnlyError` (a `PermissionError`).
 - The upload services (`client.campaigns`, `artifacts`, `structural_elements`, `measurements`,
-  `campaign_metrics`, `drone_images`, `threed`) raise `SandboxReadOnlyError`. On a ground station
+  `campaign_metrics`, `drone_images`, `threed`) aren't available: accessing them raises an
+  `AttributeError` that says so (so `hasattr(client, "campaigns")` is `False`). On a ground station
   `dss campaign upload` runs before `update_status`.
 
 ### The simulated drone: `SimDrone`

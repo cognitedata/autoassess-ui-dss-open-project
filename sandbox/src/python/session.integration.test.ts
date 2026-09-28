@@ -106,7 +106,17 @@ describe('PythonSession (real Pyodide)', () => {
   it('should refuse services that upload to CDF', async () => {
     const { outcome } = await run(session, 'from uidss import UidssClient\nUidssClient.from_env().campaigns');
 
-    expect(outcome.error).toContain('client.campaigns is not available in the sandbox');
+    expect(outcome.error).toContain('AttributeError: client.campaigns is not available in the sandbox');
+  });
+
+  it('should keep hasattr/getattr working for services the sandbox lacks', async () => {
+    const { stdout, outcome } = await run(
+      session,
+      'from uidss import UidssClient\nc = UidssClient.from_env()\nprint(hasattr(c, "campaigns"), getattr(c, "threed", None))',
+    );
+
+    expect(outcome).toEqual({ ok: true });
+    expect(stdout.trim()).toBe('False None');
   });
 
   it('should have no module-level drone singleton', async () => {
