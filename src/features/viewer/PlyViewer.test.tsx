@@ -1,20 +1,26 @@
+import type { CogniteClient } from '@cognite/sdk';
 import { render, screen, act, waitFor } from '@testing-library/react';
 import { createRef } from 'react';
+import type { PerspectiveCamera} from 'three';
+import { Box3, BufferGeometry, Mesh, MeshBasicMaterial, Object3D, Vector3 } from 'three';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { BufferAttribute, BufferGeometry, Mesh, MeshBasicMaterial, MeshLambertMaterial, Object3D, PerspectiveCamera, Vector3 } from 'three';
-import { PlyViewer, PlyViewerContext, isTypingTarget } from './PlyViewer';
-import type { PlyViewerContextType, PlyViewerHandle } from './PlyViewer';
+
 import { createMockDroneImage } from '../../__mocks__/droneImages';
-import { useLayerVisibilityStore } from './layerVisibilityStore';
-import { usePcdVisibilityStore } from './pcdVisibilityStore';
+import { createMockElementTask } from '../../__mocks__/inspectionTasks';
+import { createMockStructuralElement } from '../../__mocks__/structuralElements';
+
 import { useActivePlanStore } from './activePlanStore';
 import { useColorModeStore } from './colorModeStore';
 import { ALL_LAYER_TYPES } from './LayerType';
 import type { LayerType } from './LayerType';
+import { useLayerVisibilityStore } from './layerVisibilityStore';
 import { getCachedParsedPly } from './parsedGeometryCache';
 import type { CachedParsedPly } from './parsedGeometryCache';
-import { createMockStructuralElement } from '../../__mocks__/structuralElements';
-import { createMockElementTask } from '../../__mocks__/inspectionTasks';
+import { usePcdVisibilityStore } from './pcdVisibilityStore';
+import { PlyViewer, PlyViewerContext, isTypingTarget } from './PlyViewer';
+import type { PlyViewerContextType, PlyViewerHandle } from './PlyViewer';
+import type { CampaignCadModel } from './reveal/CampaignCadModelService';
+import type { CadModelHandle, ViewerEngine } from './reveal/revealEngine';
 import type { SelectionHit } from './selection';
 
 // Shared canvas — dblclick events are fired on renderer.domElement after mount
@@ -73,17 +79,13 @@ describe(PlyViewer.name, () => {
     // is never mocked at the module level (vi.mock('three', importOriginal) loads
     // the full 2 MB bundle through Vite's transform pipeline and crashes the worker).
     mockDeps = {
-      createRenderer: () => ({
-        setPixelRatio: vi.fn(),
-        setSize: vi.fn(),
-        domElement: sharedCanvas,
-        render: vi.fn(),
-        dispose: vi.fn(),
-      }),
+      createEngine: () => createFakeEngine(),
       createRaycaster: () => ({
         setFromCamera: vi.fn(),
         intersectObjects: mockRaycasterIntersectObjects,
       }),
+      useSdk: () => ({}) as CogniteClient,
+      getDownloadUrl: vi.fn(() => Promise.reject(new Error('no URL refresh in this test'))),
     };
 
     vi.stubGlobal('ResizeObserver', vi.fn().mockImplementation(() => ({
@@ -298,6 +300,51 @@ describe(PlyViewer.name, () => {
 
       await waitFor(() => expect(fetchPlyWithCache).toHaveBeenCalledTimes(1));
       expect(fetchPlyWithCache).toHaveBeenCalledWith(pcdEntry.url, expect.any(Function), expect.any(AbortSignal));
+    });
+  });
+
+  describe('fresh download URLs', () => {
+    // CDF signed download URLs in this project live ~30 s, but layers are downloaded lazily
+    // when toggled on — possibly minutes after the page fetched the URLs.
+    it('downloads a lazily toggled point cloud with a URL fetched at that moment', async () => {
+      const { fetchPlyWithCache } = await import('./plyCache');
+      vi.mocked(mockDeps.getDownloadUrl).mockResolvedValue('https://storage.example.test/cloud.pcd?signed=fresh');
+      const pcdEntry = { key: '86128812461607', url: 'https://storage.example.test/cloud.pcd?signed=expired' };
+      renderViewer(<PlyViewer plyEntries={[]} pcdUrls={[pcdEntry]} elements={[]} />);
+
+      act(() => {
+        usePcdVisibilityStore.getState().setPcdVisible('86128812461607', true);
+      });
+
+      await waitFor(() => expect(fetchPlyWithCache).toHaveBeenCalledTimes(1));
+      expect(mockDeps.getDownloadUrl).toHaveBeenCalledWith(expect.anything(), 86128812461607);
+      expect(fetchPlyWithCache).toHaveBeenCalledWith(
+        'https://storage.example.test/cloud.pcd?signed=fresh', expect.any(Function), expect.any(AbortSignal),
+      );
+    });
+
+    it('downloads the collision proxy with a fresh URL on a cache miss', async () => {
+      const { fetchPlyWithCache } = await import('./plyCache');
+      vi.mocked(mockDeps.getDownloadUrl).mockResolvedValue('https://storage.example.test/proxy.ply?signed=fresh');
+
+      renderViewer(<PlyViewer plyEntries={[{ key: '42', url: 'https://storage.example.test/proxy.ply?signed=old', campaignId: 'test-campaign' }]} elements={[]} />);
+
+      await waitFor(() => expect(fetchPlyWithCache).toHaveBeenCalledTimes(1));
+      expect(fetchPlyWithCache).toHaveBeenCalledWith(
+        'https://storage.example.test/proxy.ply?signed=fresh', expect.any(Function), expect.any(AbortSignal),
+      );
+    });
+
+    it('falls back to the given URL when refreshing fails', async () => {
+      const { fetchPlyWithCache } = await import('./plyCache');
+      const pcdEntry = { key: '7', url: 'https://storage.example.test/cloud.pcd?signed=1' };
+      renderViewer(<PlyViewer plyEntries={[]} pcdUrls={[pcdEntry]} elements={[]} />);
+
+      act(() => {
+        usePcdVisibilityStore.getState().setPcdVisible('7', true);
+      });
+
+      await waitFor(() => expect(fetchPlyWithCache).toHaveBeenCalledWith(pcdEntry.url, expect.any(Function), expect.any(AbortSignal)));
     });
   });
 
@@ -578,99 +625,136 @@ describe(PlyViewer.name, () => {
     });
   });
 
-  describe('color material assignment', () => {
-    // Track the active Object3D.prototype.add spy so afterEach can always restore it,
-    // even when a test fails. vi.restoreAllMocks() is intentionally NOT used here because
-    // it would strip mockImplementation from vi.mock() stubs (e.g. FirstPersonViewerControls),
-    // corrupting subsequent tests.
-    let activeMeshCapture: ReturnType<typeof captureAddedPlyMesh> | null = null;
-    afterEach(() => { activeMeshCapture?.restore(); activeMeshCapture = null; });
+  describe('CAD models (Reveal)', () => {
+    let engine: ViewerEngine;
+    let handle: CadModelHandle;
 
-    async function loadColoredMesh(mode: 'colorization' | 'defects') {
-      vi.mocked(getCachedParsedPly).mockResolvedValueOnce(makeColoredMeshCache());
-      activeMeshCapture = captureAddedPlyMesh();
-      useColorModeStore.getState().setColorMode('MESH', mode);
+    beforeEach(() => {
+      handle = createFakeCadHandle();
+      mockDeps.createEngine = () => {
+        engine = createFakeEngine();
+        vi.mocked(engine.addCadModel).mockResolvedValue(handle);
+        return engine;
+      };
+    });
+
+    it('adds the CAD model of a campaign whose MESH toggle is on', async () => {
+      const cad = makeCadModel('test-campaign');
+
+      renderViewer(<PlyViewer plyEntries={[]} cadModels={[cad]} elements={[]} />);
+
+      await waitFor(() => expect(engine.addCadModel).toHaveBeenCalledWith(cad));
+    });
+
+    it('adds a hidden campaign\'s CAD model only once its MESH toggle turns on', async () => {
+      const cad = makeCadModel('hidden-campaign');
+      renderViewer(<PlyViewer plyEntries={[]} cadModels={[cad]} elements={[]} />);
+      expect(engine.addCadModel).not.toHaveBeenCalled();
+
+      act(() => useLayerVisibilityStore.getState().setLayerVisible('hidden-campaign', 'MESH', true));
+
+      await waitFor(() => expect(engine.addCadModel).toHaveBeenCalledTimes(1));
+    });
+
+    it('applies the current colour mode once the model has loaded', async () => {
+      useColorModeStore.getState().setColorMode('MESH', 'defects');
+
+      renderViewer(<PlyViewer plyEntries={[]} cadModels={[makeCadModel('test-campaign')]} elements={[]} />);
+
+      await waitFor(() => expect(handle.setColourMode).toHaveBeenCalledWith('defects'));
+    });
+
+    it('restyles loaded models when the colour mode changes', async () => {
+      renderViewer(<PlyViewer plyEntries={[]} cadModels={[makeCadModel('test-campaign')]} elements={[]} />);
+      await waitFor(() => expect(handle.setColourMode).toHaveBeenCalled());
+
+      act(() => useColorModeStore.getState().setColorMode('MESH', 'defects'));
+
+      expect(handle.setColourMode).toHaveBeenLastCalledWith('defects');
+    });
+
+    it('hides a loaded model when its campaign MESH toggle turns off', async () => {
+      renderViewer(<PlyViewer plyEntries={[]} cadModels={[makeCadModel('test-campaign')]} elements={[]} />);
+      await waitFor(() => expect(handle.setVisible).toHaveBeenCalledWith(true));
+
+      act(() => useLayerVisibilityStore.getState().setLayerVisible('test-campaign', 'MESH', false));
+
+      expect(handle.setVisible).toHaveBeenLastCalledWith(false);
+    });
+
+    it('logs and keeps running when a CAD model fails to load', async () => {
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      mockDeps.createEngine = () => {
+        engine = createFakeEngine();
+        vi.mocked(engine.addCadModel).mockRejectedValue(new Error('boom'));
+        return engine;
+      };
+
+      renderViewer(<PlyViewer plyEntries={[]} cadModels={[makeCadModel('test-campaign')]} elements={[]} />);
+
+      await waitFor(() => expect(error).toHaveBeenCalled());
+      expect(screen.getByTestId('ply-viewer-container')).toBeDefined();
+      error.mockRestore();
+    });
+
+    it('disposes the engine on unmount', () => {
+      const { unmount } = renderViewer(<PlyViewer plyEntries={[]} elements={[]} />);
+
+      unmount();
+
+      expect(engine.dispose).toHaveBeenCalled();
+    });
+  });
+
+  describe('onCameraSettled', () => {
+    it('reports the pose after the camera moved and came to rest, but not the start pose', async () => {
+      // Drive the render loop by hand: keep the latest frame callback and a controllable clock.
+      let frame: FrameRequestCallback = () => {};
+      vi.stubGlobal('requestAnimationFrame', vi.fn((cb: FrameRequestCallback) => { frame = cb; return 1; }));
+      let now = 0;
+      const clock = vi.spyOn(performance, 'now').mockImplementation(() => now);
+      let camera: PerspectiveCamera | null = null;
+      mockDeps.createEngine = () => ({
+        ...createFakeEngine(),
+        render: (_: unknown, cam: PerspectiveCamera) => { camera = cam; },
+      });
+      vi.mocked(getCachedParsedPly).mockResolvedValueOnce(makeFaceOnlyMeshCache());
+      const onCameraSettled = vi.fn();
+
       renderViewer(
-        <PlyViewer plyEntries={[makePlyEntry('https://storage.example.test/mesh.ply')]} elements={[]} />,
+        <PlyViewer plyEntries={[makePlyEntry('https://storage.example.test/proxy.ply')]} elements={[]} onCameraSettled={onCameraSettled} />,
       );
-      await waitFor(() => expect(activeMeshCapture!.getPlyMesh()).toBeDefined());
-      const mesh = activeMeshCapture.getPlyMesh()!;
-      activeMeshCapture.restore(); activeMeshCapture = null;
-      return mesh;
-    }
+      await waitFor(() => expect(screen.queryByTestId('ply-viewer-loading')).toBeNull());
 
-    it('uses shaded MeshLambertMaterial with vertex colors in colorization mode', async () => {
-      const mesh = await loadColoredMesh('colorization');
-      expect(mesh.material).toBeInstanceOf(MeshLambertMaterial);
-      expect((mesh.material as MeshLambertMaterial).vertexColors).toBe(true);
+      // Start pose settles without being reported.
+      now = 5000; frame(now);
+      now = 6000; frame(now);
+      expect(onCameraSettled).not.toHaveBeenCalled();
+
+      // A move followed by 600 ms of rest is reported once.
+      camera!.position.x += 2;
+      now = 7000; frame(now);
+      now = 7700; frame(now);
+      expect(onCameraSettled).toHaveBeenCalledTimes(1);
+      expect(onCameraSettled.mock.calls[0][0].position[0]).toBeCloseTo(camera!.position.x);
+
+      clock.mockRestore();
     });
+  });
 
-    it('uses shaded MeshLambertMaterial with segment colors in defects mode', async () => {
-      const mesh = await loadColoredMesh('defects');
-      // Defects mode renders the face/segment colors encoded in the PLY face data.
-      expect(mesh.material).toBeInstanceOf(MeshLambertMaterial);
-      expect((mesh.material as MeshLambertMaterial).vertexColors).toBe(true);
-      // Geometry's active 'color' attribute should be the face/segment colors (green).
-      expect((mesh.geometry.attributes.color as BufferAttribute).array[0]).toBeCloseTo(0); // R ≈ 0
-      expect((mesh.geometry.attributes.color as BufferAttribute).array[1]).toBeCloseTo(1); // G ≈ 1
-    });
+  describe('collision proxy', () => {
+    let capture: ReturnType<typeof captureAddedProxyMesh> | null = null;
+    afterEach(() => { capture?.restore(); capture = null; });
 
-    it('swaps color attribute between vertex colors and face colors on mode change', async () => {
-      const mesh = await loadColoredMesh('defects');
+    it('adds the proxy mesh invisibly — Reveal renders the CAD model instead', async () => {
+      vi.mocked(getCachedParsedPly).mockResolvedValueOnce(makeFaceOnlyMeshCache());
+      capture = captureAddedProxyMesh();
 
-      act(() => { useColorModeStore.getState().setColorMode('MESH', 'colorization'); });
-      expect(mesh.material).toBeInstanceOf(MeshLambertMaterial);
-      expect((mesh.material as MeshLambertMaterial).vertexColors).toBe(true);
-      // Colorization active color attribute should be vertex colors (R=1 for first vertex).
-      expect((mesh.geometry.attributes.color as BufferAttribute).array[0]).toBeCloseTo(1);
+      renderViewer(<PlyViewer plyEntries={[makePlyEntry('https://storage.example.test/proxy.ply')]} elements={[]} />);
 
-      act(() => { useColorModeStore.getState().setColorMode('MESH', 'defects'); });
-      expect(mesh.material).toBeInstanceOf(MeshLambertMaterial);
-      expect((mesh.material as MeshLambertMaterial).vertexColors).toBe(true);
-      // Defects active color attribute should be face colors (R=0, G=1 for first vertex).
-      expect((mesh.geometry.attributes.color as BufferAttribute).array[0]).toBeCloseTo(0);
-      expect((mesh.geometry.attributes.color as BufferAttribute).array[1]).toBeCloseTo(1);
-    });
-
-    describe('face colors only (no camera vertex colors)', () => {
-      async function loadFaceOnlyMesh(mode: 'colorization' | 'defects') {
-        vi.mocked(getCachedParsedPly).mockResolvedValueOnce(makeFaceOnlyMeshCache());
-        activeMeshCapture = captureAddedPlyMesh();
-        useColorModeStore.getState().setColorMode('MESH', mode);
-        renderViewer(
-          <PlyViewer plyEntries={[makePlyEntry('https://storage.example.test/mesh.ply')]} elements={[]} />,
-        );
-        await waitFor(() => expect(activeMeshCapture!.getPlyMesh()).toBeDefined());
-        const mesh = activeMeshCapture!.getPlyMesh()!;
-        activeMeshCapture!.restore(); activeMeshCapture = null;
-        return mesh;
-      }
-
-      it('uses flat MeshLambertMaterial in colorization mode (no camera data)', async () => {
-        const mesh = await loadFaceOnlyMesh('colorization');
-        expect(mesh.material).toBeInstanceOf(MeshLambertMaterial);
-        expect((mesh.material as MeshLambertMaterial).vertexColors).toBe(false);
-        expect(mesh.geometry.hasAttribute('color')).toBe(false);
-      });
-
-      it('uses MeshLambertMaterial with segment colors in defects mode', async () => {
-        const mesh = await loadFaceOnlyMesh('defects');
-        expect(mesh.material).toBeInstanceOf(MeshLambertMaterial);
-        expect((mesh.material as MeshLambertMaterial).vertexColors).toBe(true);
-        expect((mesh.geometry.attributes.color as BufferAttribute).array[1]).toBeCloseTo(1); // G ≈ 1
-      });
-
-      it('clears color attribute when switching from defects to colorization', async () => {
-        const mesh = await loadFaceOnlyMesh('defects');
-        expect(mesh.geometry.hasAttribute('color')).toBe(true);
-
-        act(() => { useColorModeStore.getState().setColorMode('MESH', 'colorization'); });
-        expect(mesh.geometry.hasAttribute('color')).toBe(false);
-
-        act(() => { useColorModeStore.getState().setColorMode('MESH', 'defects'); });
-        expect(mesh.geometry.hasAttribute('color')).toBe(true);
-        expect((mesh.geometry.attributes.color as BufferAttribute).array[1]).toBeCloseTo(1);
-      });
+      await waitFor(() => expect(capture!.getProxy()).toBeDefined());
+      expect(capture.getProxy()!.visible).toBe(false);
+      expect(capture.getProxy()!.userData.campaignId).toBe('test-campaign');
     });
   });
 
@@ -939,13 +1023,10 @@ describe(PlyViewer.name, () => {
       const captured: { camera: PerspectiveCamera | null } = { camera: null };
       const capturingDeps: PlyViewerContextType = {
         ...mockDeps,
-        createRenderer: () => {
-          const base = mockDeps.createRenderer();
-          return {
-            ...base,
-            render: (_: unknown, cam: PerspectiveCamera) => { captured.camera = cam; },
-          };
-        },
+        createEngine: () => ({
+          ...createFakeEngine(),
+          render: (_: unknown, cam: PerspectiveCamera) => { captured.camera = cam; },
+        }),
       };
 
       vi.mocked(getCachedParsedPly).mockResolvedValueOnce({
@@ -1059,42 +1140,6 @@ describe(PlyViewer.name, () => {
 
 // --- Helpers ---
 
-/**
- * Returns a CachedParsedPly with position, face colors ('color') and vertex colors ('vertexColor').
- * 'color' = face/segment colors (green tones), 'vertexColor' = camera-captured RGB (RGB diagonal).
- */
-function makeColoredMeshCache(): CachedParsedPly {
-  return {
-    attrs: {
-      position: {
-        buffer: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]).buffer,
-        itemSize: 3,
-        normalized: false,
-      },
-      color: {
-        // face/segment colors — defects mode
-        buffer: new Float32Array([0, 1, 0, 0, 1, 0, 0, 1, 0]).buffer,
-        itemSize: 3,
-        normalized: false,
-      },
-      vertexColor: {
-        // camera-captured vertex colors — colorization mode
-        buffer: new Float32Array([1, 0, 0, 0, 1, 0, 0, 0, 1]).buffer,
-        itemSize: 3,
-        normalized: false,
-      },
-    },
-    index: null,
-    indexIsUint32: false,
-    isMesh: true,
-    hasFaceColors: true,
-  };
-}
-
-/**
- * Returns a CachedParsedPly with position and face colors only — no camera vertex colors.
- * 'color' = face/segment colors (green). hasFaceColors=true, no 'vertexColor' attribute.
- */
 function makeFaceOnlyMeshCache(): CachedParsedPly {
   return {
     attrs: {
@@ -1171,27 +1216,52 @@ describe(isTypingTarget.name, () => {
 });
 
 /**
- * Spies on Object3D.prototype.add to capture the PLY mesh when it is inserted into the
- * scene hierarchy. The PLY mesh is identified by the presence of userData.materials,
- * which is set exclusively in addPlyToScene.
- *
- * Call restore() after the mesh has been captured to clean up the spy.
+ * Spies on Object3D.prototype.add to capture the collision-proxy mesh when it is inserted
+ * into the scene hierarchy (identified by userData.campaignId, set in addProxyToScene).
  */
-function captureAddedPlyMesh(): { getPlyMesh: () => Mesh | undefined; restore: () => void } {
+function captureAddedProxyMesh(): { getProxy: () => Mesh | undefined; restore: () => void } {
   const captured: Mesh[] = [];
   const origAdd = Object3D.prototype.add;
   const spy = vi.spyOn(Object3D.prototype, 'add').mockImplementation(
     function (this: Object3D, ...objects: Object3D[]) {
       objects.forEach((o) => {
-        if (o instanceof Mesh && o.userData.materials !== undefined) {
-          captured.push(o);
-        }
+        if (o instanceof Mesh && o.userData.campaignId !== undefined) captured.push(o);
       });
       return origAdd.call(this, ...objects);
     },
   );
+  return { getProxy: () => captured[0], restore: () => spy.mockRestore() };
+}
+
+function makeCadModel(campaignExternalId: string): CampaignCadModel {
   return {
-    getPlyMesh: () => captured[0],
-    restore: () => spy.mockRestore(),
+    campaignExternalId,
+    modelId: 1,
+    revisionId: 2,
+    status: 'Done',
+    collisionProxyFileId: 3,
+    hasTexture: false,
+    palette: {},
+  };
+}
+
+/** Engine test double: no WebGL, pointer events on the shared canvas, CAD models resolve to a fake handle. */
+function createFakeEngine(handle: Partial<CadModelHandle> = {}): ViewerEngine {
+  return {
+    domElement: sharedCanvas,
+    setPixelRatio: vi.fn(),
+    setSize: vi.fn(),
+    render: vi.fn(),
+    addCadModel: vi.fn(() => Promise.resolve(createFakeCadHandle(handle))),
+    dispose: vi.fn(),
+  };
+}
+
+function createFakeCadHandle(overrides: Partial<CadModelHandle> = {}): CadModelHandle {
+  return {
+    boundingBox: new Box3(new Vector3(0, 0, 0), new Vector3(1, 1, 1)),
+    setVisible: vi.fn(),
+    setColourMode: vi.fn(() => Promise.resolve()),
+    ...overrides,
   };
 }

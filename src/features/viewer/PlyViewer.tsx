@@ -1,74 +1,66 @@
+import { useCogniteSdk } from '@cognite/app-sdk/react';
 import { Loader } from '@cognite/aura/components';
+import type { CogniteClient } from '@cognite/sdk';
 import { createContext, forwardRef, useContext, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import {
-  AmbientLight,
   Box3,
   BufferAttribute,
   BufferGeometry,
   Clock,
-  Color,
-  DirectionalLight,
   DoubleSide,
   Frustum,
   Group,
   Matrix3,
   Matrix4,
-  Material,
   Mesh,
   MeshBasicMaterial,
-  MeshLambertMaterial,
   PerspectiveCamera,
-  Points,
   PointsMaterial,
   Quaternion,
   Raycaster,
   RingGeometry,
-  Scene,
   Vector2,
   Vector3,
-  WebGLRenderer,
 } from 'three';
-import type { Intersection, Object3D } from 'three';
-import { FirstPersonViewerControls } from './FirstPersonViewerControls';
-import { GroundPlaneViewerControls } from './GroundPlaneViewerControls';
-import { useViewerSettingsStore } from './viewerSettingsStore';
-import type { ControlsMode } from './viewerControlsModeStore';
-import { useViewerControlsModeStore } from './viewerControlsModeStore';
-
+import type { Intersection, Object3D ,
+  Points} from 'three';
 import { PCDLoader } from 'three/examples/jsm/loaders/PCDLoader.js';
+
 import { useActivePlanStore } from './activePlanStore';
-import { applyLabelColors } from './pcdLabelColorizer';
 import { useColorModeStore } from './colorModeStore';
 import type { ColorMode } from './colorModeStore';
+import { DefectDetectionLayer } from './DefectDetectionLayer';
+import type { DefectDetection } from './DefectDetectionService';
+import type { DroneImage } from './DroneImageService';
+import { FirstPersonViewerControls } from './FirstPersonViewerControls';
+import { GroundPlaneViewerControls } from './GroundPlaneViewerControls';
+import { ImageLayer } from './ImageLayer';
+import type { InspectionTask } from './InspectionTaskService';
 import type { LayerType } from './LayerType';
 import { useLayerVisibilityStore } from './layerVisibilityStore';
 import { MeshLayer } from './MeshLayer';
-import { usePcdVisibilityStore } from './pcdVisibilityStore';
-import { fetchPlyWithCache, derivePlyKey } from './plyCache';
-import { getCachedParsedPly, putCachedParsedPly } from './parsedGeometryCache';
-import type { CachedParsedPly } from './parsedGeometryCache';
-import type { PlyWorkerResponse } from './plyWorker';
-import type { SelectionHit } from './selection';
-import { DefectDetectionLayer } from './DefectDetectionLayer';
-import type { DefectDetection } from './DefectDetectionService';
-import { ImageLayer } from './ImageLayer';
-import type { DroneImage } from './DroneImageService';
 import { NdtMeasurementLayer } from './NdtMeasurementLayer';
 import type { NdtMeasurement } from './NdtMeasurementService';
+import type { CachedParsedPly } from './parsedGeometryCache';
+import { getCachedParsedPly, putCachedParsedPly } from './parsedGeometryCache';
+import { applyLabelColors } from './pcdLabelColorizer';
+import { usePcdVisibilityStore } from './pcdVisibilityStore';
 import { PlanTasksLayer } from './PlanTasksLayer';
+import { fetchPlyWithCache, derivePlyKey } from './plyCache';
+import type { PlyWorkerResponse } from './plyWorker';
+import type { CameraPose } from './cameraParam';
+import { CameraSettleDetector, poseFromCamera } from './CameraSettleDetector';
+import type { CampaignCadModel } from './reveal/CampaignCadModelService';
+import { createRevealEngine } from './reveal/revealEngine';
+import type { CadModelHandle, ViewerEngine, ViewerEngineOptions } from './reveal/revealEngine';
+import type { SelectionHit } from './selection';
 import { SelectionLayer, REGION_CIRCLE_RADIUS_M } from './SelectionLayer';
 import { SemanticLayer } from './SemanticLayer';
 import type { StructuralElement } from './StructuralElementService';
-import type { InspectionTask } from './InspectionTaskService';
+import { useViewerControlsModeStore } from './viewerControlsModeStore';
+import type { ControlsMode } from './viewerControlsModeStore';
 import { ViewerLayerManager } from './ViewerLayerManager';
-
-interface RendererLike {
-  setPixelRatio(value: number): void;
-  setSize(width: number, height: number): void;
-  readonly domElement: HTMLCanvasElement;
-  render(scene: Scene, camera: PerspectiveCamera): void;
-  dispose(): void;
-}
+import { useViewerSettingsStore } from './viewerSettingsStore';
 
 interface RaycasterLike {
   setFromCamera(coords: Vector2, camera: PerspectiveCamera): void;
@@ -76,13 +68,22 @@ interface RaycasterLike {
 }
 
 export type PlyViewerContextType = {
-  createRenderer: () => RendererLike;
+  createEngine: (options: ViewerEngineOptions) => ViewerEngine;
   createRaycaster: () => RaycasterLike;
+  useSdk: () => CogniteClient;
+  /** Fresh signed download URL for a file (CDF's signed URLs expire after ~30 s). */
+  getDownloadUrl: (sdk: CogniteClient, fileId: number) => Promise<string>;
 };
 
 const defaultPlyViewerDeps: PlyViewerContextType = {
-  createRenderer: () => new WebGLRenderer({ antialias: true }),
+  createEngine: (options) => createRevealEngine(options),
   createRaycaster: () => new Raycaster(),
+  useSdk: useCogniteSdk,
+  getDownloadUrl: async (sdk, fileId) => {
+    const [link] = await sdk.files.getDownloadUrls([{ id: fileId }]);
+    if (!link?.downloadUrl) throw new Error(`No download URL for file ${fileId}`);
+    return link.downloadUrl;
+  },
 };
 
 export const PlyViewerContext = createContext<PlyViewerContextType>(defaultPlyViewerDeps);
@@ -265,8 +266,14 @@ export interface PlyViewerHandle {
 }
 
 export interface PlyViewerProps {
-  /** Per-campaign PLY mesh entries — each campaign's meshes are grouped and toggled independently. */
+  /**
+   * Per-campaign collision proxies — small decimated PLY meshes that are never drawn but
+   * are ray-cast for surface picking, smoothed normals, the hover ring and image rays
+   * (Reveal's own picking returns no normals). Grouped and toggled per campaign.
+   */
   plyEntries: { key: string; url: string; campaignId: string }[];
+  /** Per-campaign CDF CAD models — the rendered meshes, streamed by Reveal. */
+  cadModels?: CampaignCadModel[];
   /** Per-file PCD point cloud entries — each is independently togglable via pcdVisibilityStore. */
   pcdUrls?: { key: string; url: string }[];
   elements: StructuralElement[];
@@ -282,6 +289,8 @@ export interface PlyViewerProps {
   groundPlane?: [number, number, number];
   /** Override the automatic fit-to-model with a fixed starting camera pose. */
   initialCameraPose?: { position: [number, number, number]; target: [number, number, number] };
+  /** Called when the camera comes to rest after the user (or a fly-to) moved it — used to keep `?camera=` in the URL. */
+  onCameraSettled?: (pose: CameraPose) => void;
 }
 
 type DownloadEntry = { loaded: number; total: number; done: boolean; parsing: boolean; fromCache: boolean };
@@ -317,6 +326,7 @@ const EMPTY_PCD_URLS: { key: string; url: string }[] = [];
 const EMPTY_NDT_MEASUREMENTS: NdtMeasurement[] = [];
 const EMPTY_DEFECTS: DefectDetection[] = [];
 const EMPTY_DRONE_IMAGES: DroneImage[] = [];
+const EMPTY_CAD_MODELS: CampaignCadModel[] = [];
 
 /** Returns true when the keyboard event originated from a text-entry element. */
 export function isTypingTarget(e: KeyboardEvent): boolean {
@@ -325,17 +335,22 @@ export function isTypingTarget(e: KeyboardEvent): boolean {
 }
 
 export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function PlyViewer(
-  { plyEntries = EMPTY_PLY_ENTRIES, pcdUrls = EMPTY_PCD_URLS, elements, ndtMeasurements = EMPTY_NDT_MEASUREMENTS, defects = EMPTY_DEFECTS, droneImages = EMPTY_DRONE_IMAGES, onHitSelected, groundPlane, initialCameraPose }: PlyViewerProps,
+  { plyEntries = EMPTY_PLY_ENTRIES, cadModels = EMPTY_CAD_MODELS, pcdUrls = EMPTY_PCD_URLS, elements, ndtMeasurements = EMPTY_NDT_MEASUREMENTS, defects = EMPTY_DEFECTS, droneImages = EMPTY_DRONE_IMAGES, onHitSelected, groundPlane, initialCameraPose, onCameraSettled }: PlyViewerProps,
   ref,
 ) {
-  const { createRenderer, createRaycaster } = useContext(PlyViewerContext);
+  const { createEngine, createRaycaster, useSdk, getDownloadUrl } = useContext(PlyViewerContext);
+  const sdk = useSdk();
+  const onCameraSettledRef = useRef(onCameraSettled);
+  onCameraSettledRef.current = onCameraSettled;
   const containerRef = useRef<HTMLDivElement>(null);
   const semanticLayerRef = useRef<SemanticLayer | null>(null);
   const ndtLayerRef = useRef<NdtMeasurementLayer | null>(null);
   const planTasksLayerRef = useRef<PlanTasksLayer | null>(null);
   const defectLayerRef = useRef<DefectDetectionLayer | null>(null);
   const selectionLayerRef = useRef<SelectionLayer | null>(null);
-  const loadedObjectsRef = useRef<(Mesh | Points)[]>([]);
+  const loadedObjectsRef = useRef<Mesh[]>([]);
+  /** Per-campaign CAD model handles (the rendered meshes). */
+  const cadHandlesRef = useRef<Map<string, CadModelHandle>>(new Map());
   /** Per-key map of loaded PCD Points objects — used by pcdVisibilityStore subscription. */
   const pcdObjectsRef = useRef<Map<string, Points>>(new Map());
   /** Per-campaign Three.js Groups (children of meshLayer) — used for per-campaign MESH visibility. */
@@ -415,10 +430,6 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
     setProgressState({ percent: null, parsing: false, loadingFromCache: false, allDone: initialLoadUrls.length === 0 });
     setRendererCrashed(false);
 
-    const renderer = createRenderer();
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(container.clientWidth, container.clientHeight);
-    container.appendChild(renderer.domElement);
 
     // A lost WebGL context (typically the GPU process crashing from a memory-hungry
     // parse/render) otherwise leaves the canvas blank with no console output at all —
@@ -431,14 +442,27 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       );
       setRendererCrashed(true);
     };
-    renderer.domElement.addEventListener('webglcontextlost', onContextLost);
-
-    const scene = new Scene();
-    scene.background = new Color(0x1a1a2e);
+    // Root of every overlay object (layers, PCDs, rings); rendered by the engine with the CAD models.
+    const scene = new Group();
 
     const camera = new PerspectiveCamera(60, container.clientWidth / container.clientHeight, 0.01, 1000);
     camera.position.set(0, 5, 10);
     cameraRef.current = camera;
+
+    // Reveal sector-loading progress for the initial load of the visible CAD models.
+    let initialCadLoadDone = false;
+    const onCadLoading = (loaded: number, requested: number) => {
+      if (initialCadLoadDone || signal.aborted || requested === 0) return;
+      const done = loaded >= requested;
+      downloads.set('cad-sectors', { loaded, total: requested, done, parsing: false, fromCache: false });
+      if (done) initialCadLoadDone = true;
+      setProgressState(computeProgress(downloads));
+    };
+    const engine = createEngine({ container, camera, sdk, onLoading: onCadLoading });
+    engine.setPixelRatio(window.devicePixelRatio);
+    engine.setSize(container.clientWidth, container.clientHeight);
+    const renderer = engine;
+    renderer.domElement.addEventListener('webglcontextlost', onContextLost);
 
     const groundNormalVec = groundPlane
       ? new Vector3(...groundPlane).normalize()
@@ -507,11 +531,6 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
     const _flyTargetQ = new Quaternion();
     const _keyRotQ = new Quaternion();
 
-    scene.add(new AmbientLight(0xffffff, 0.6));
-    const dirLight = new DirectionalLight(0xffffff, 0.8);
-    dirLight.position.set(1, 2, 1.5);
-    scene.add(dirLight);
-
     loadedObjectsRef.current = [];
     pcdObjectsRef.current = new Map();
 
@@ -550,8 +569,9 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
     // loadOnePly / fetchPlyWithCache are in scope) — declared here so the visibility
     // subscriptions registered below can call whatever implementation is current when
     // a toggle fires later.
-    let triggerPlyLoad: (url: string, campaignId: string) => void = () => {};
+    let triggerPlyLoad: (url: string, campaignId: string, key: string) => void = () => {};
     let triggerPcdLoad: (key: string, url: string) => void = () => {};
+    let triggerCadLoad: (cad: CampaignCadModel) => void = () => {};
 
     // Subscribe to future visibility changes — imperatively updates Three.js without
     // triggering a React re-render on the canvas.
@@ -564,10 +584,16 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       campaignMeshGroupsRef.current.forEach((group, campaignId) => {
         group.visible = state.visibility[campaignId]?.['MESH'] === true;
       });
+      cadHandlesRef.current.forEach((handle, campaignId) => {
+        handle.setVisible(state.isEffectivelyVisible('MESH') && state.visibility[campaignId]?.['MESH'] === true);
+      });
+      cadModels.forEach((cad) => {
+        if (state.visibility[cad.campaignExternalId]?.['MESH'] === true) triggerCadLoad(cad);
+      });
       // Fetch+parse a campaign's PLY mesh the first time its MESH toggle turns on —
       // avoids downloading every campaign's raw mesh up front (see triggerPlyLoad).
-      plyEntries.forEach(({ url, campaignId }) => {
-        if (url && state.visibility[campaignId]?.['MESH'] === true) triggerPlyLoad(url, campaignId);
+      plyEntries.forEach(({ url, campaignId, key }) => {
+        if (url && state.visibility[campaignId]?.['MESH'] === true) triggerPlyLoad(url, campaignId, key);
       });
       // Per-campaign NDT sphere visibility — individual spheres are shown/hidden based
       // on whether their campaign's NDT_MEASUREMENTS toggle is enabled.
@@ -576,22 +602,14 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       );
     });
 
-    // Subscribe to color mode changes — swaps the active color attribute and material
-    // on all loaded objects without re-parsing the geometry.
+    // Subscribe to color mode changes — restyles the CAD models (camera texture / flat
+    // colour for "colorization", segment colours for "defects") without reloading them.
     const unsubscribeColorMode = useColorModeStore.subscribe((state) => {
       const mode = state.getColorMode('MESH');
-      loadedObjectsRef.current.forEach((o) => {
-        o.material = (o.userData.materials as Record<ColorMode, Material>)[mode];
-        const colorAttrs = o.userData.colorAttrs as Partial<Record<ColorMode, BufferAttribute>> | undefined;
-        if (colorAttrs) {
-          const nextColor = colorAttrs[mode];
-          if (nextColor !== undefined) {
-            (o as Mesh).geometry.setAttribute('color', nextColor);
-          } else {
-            // This mode has no color source (e.g. colorization on a face-colors-only PLY).
-            (o as Mesh).geometry.deleteAttribute('color');
-          }
-        }
+      cadHandlesRef.current.forEach((handle) => {
+        handle.setColourMode(mode).catch((error: unknown) => {
+          console.error('Failed to apply colour mode to CAD model', error);
+        });
       });
     });
 
@@ -637,6 +655,9 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
     scene.add(imageLayer.group);
     layerGroupMap.set('IMAGES', imageLayer.group);
 
+    // Armed per effect run once this run's camera has its start pose (see fitCameraOnce).
+    const settleDetector = new CameraSettleDetector();
+    let settleArmed = false;
     const clock = new Clock();
     let animFrameId: number;
     const animate = () => {
@@ -746,6 +767,10 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
         }
       }
 
+      if (settleArmed && settleDetector.update(camera, performance.now())) {
+        onCameraSettledRef.current?.(poseFromCamera(camera));
+      }
+
       renderer.render(scene, camera);
     };
     animate();
@@ -753,7 +778,7 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
     const resizeObserver = new ResizeObserver(() => {
       camera.aspect = container.clientWidth / container.clientHeight;
       camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
+      engine.setSize(container.clientWidth, container.clientHeight);
     });
     resizeObserver.observe(container);
 
@@ -762,57 +787,39 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
 
     const updateProgress = () => setProgressState(computeProgress(downloads));
 
-    const addPlyToScene = (geometry: BufferGeometry, isMesh: boolean, campaignId: string, hasFaceColors: boolean) => {
-      // Color source logic based on what the PLY header declares:
-      //
-      // Both vertex + face colors: PLYLoader overwrote 'color' with face/segment colors;
-      //   worker saved camera RGB in 'vertexColor'. Swap attribute on mode change.
-      // Face colors only: 'color' = segment data. Defects shows it; colorization is flat.
-      // Vertex colors only: PLYLoader 'color' = camera data. Colorization shows it; defects is flat.
-      // No colors: both modes are flat.
-      const hasVertexColor = geometry.hasAttribute('vertexColor');
-      const colorAttrs: Partial<Record<ColorMode, BufferAttribute>> = {};
-      const initMode = useColorModeStore.getState().getColorMode('MESH');
+    // Fit camera on the first content that arrives (a CAD model or a collision proxy) so the
+    // user sees content immediately. Skip repositioning if the user has already started
+    // navigating — moving the camera under them is worse than leaving them to navigate.
+    const fitCameraOnce = (box: Box3) => {
+      combinedBox.union(box);
+      if (cameraFitted) return;
+      cameraFitted = true;
+      cameraFittedRef.current = true;
+      const center = combinedBox.getCenter(new Vector3());
+      sceneCenterRef.current = center.clone();
+      const size = combinedBox.getSize(new Vector3()).length();
+      camera.near = size * 0.001;
+      camera.far = size * 10;
+      camera.updateProjectionMatrix();
+      semanticLayer.update(elements);
 
-      if (hasVertexColor) {
-        colorAttrs['colorization'] = geometry.getAttribute('vertexColor') as BufferAttribute;
-        colorAttrs['defects'] = geometry.getAttribute('color') as BufferAttribute;
-        const initAttr = colorAttrs[initMode];
-        if (initAttr) geometry.setAttribute('color', initAttr);
-      } else if (hasFaceColors) {
-        colorAttrs['defects'] = geometry.getAttribute('color') as BufferAttribute;
-        // Colorization has no camera data — clear the face-color attribute so colorMat renders flat.
-        if (initMode !== 'defects') geometry.deleteAttribute('color');
+      if (!userHasInteracted) {
+        if (initialCameraPose) {
+          camera.position.set(...initialCameraPose.position);
+          const target = new Vector3(...initialCameraPose.target);
+          initialTargetRef.current = target;
+          camera.lookAt(target);
+        } else {
+          camera.position.copy(center).add(new Vector3(0, size * 0.3, size * 0.6));
+          camera.lookAt(center);
+        }
       }
-      // Only store colorAttrs when there is something to swap; absence signals no attribute management needed.
-      const hasColorAttrs = Object.keys(colorAttrs).length > 0;
+      // The start pose is not a user change: don't write it to the URL.
+      settleDetector.reset(camera);
+      settleArmed = true;
+    };
 
-      const hasColor = geometry.hasAttribute('color');
-
-      // colorization uses vertex colors when camera RGB is available (vertex-only PLY, or both).
-      const colorUsesVertexColor = hasVertexColor || (hasColor && !hasFaceColors);
-      // defects uses per-face/segment colors when the PLY declared them.
-      const defectsUsesColor = hasVertexColor || hasFaceColors;
-
-      const colorMat: Material = isMesh
-        ? new MeshLambertMaterial({ vertexColors: colorUsesVertexColor, color: colorUsesVertexColor ? 0xffffff : 0x88aaff, side: DoubleSide })
-        : new PointsMaterial({ size: 0.02, vertexColors: colorUsesVertexColor, color: colorUsesVertexColor ? 0xffffff : 0x88aaff });
-      const semanticsMat: Material = isMesh
-        ? new MeshLambertMaterial({ vertexColors: defectsUsesColor, color: defectsUsesColor ? 0xffffff : 0x88aaff, side: DoubleSide })
-        : new PointsMaterial({ size: 0.02, vertexColors: defectsUsesColor, color: defectsUsesColor ? 0xffffff : 0x88aaff });
-
-      const materials: Record<ColorMode, Material> = { colorization: colorMat, defects: semanticsMat };
-
-      const object3d = isMesh ? new Mesh(geometry, colorMat) : new Points(geometry, colorMat);
-      object3d.userData.materials = materials;
-      if (hasColorAttrs) object3d.userData.colorAttrs = colorAttrs;
-      object3d.userData.campaignId = campaignId;
-
-      object3d.material = materials[initMode];
-
-      // Add to a per-campaign group that is itself a child of meshLayer.
-      // meshLayer.group visibility (via isEffectivelyVisible) controls the whole set;
-      // the campaign group visibility controls the individual campaign's mesh.
+    const campaignGroupFor = (campaignId: string) => {
       let campaignGroup = campaignMeshGroupsRef.current.get(campaignId);
       if (!campaignGroup) {
         campaignGroup = new Group();
@@ -820,39 +827,35 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
         meshLayer.group.add(campaignGroup);
         campaignMeshGroupsRef.current.set(campaignId, campaignGroup);
       }
-      campaignGroup.add(object3d);
-      loadedObjectsRef.current.push(object3d);
-      combinedBox.expandByObject(object3d);
+      return campaignGroup;
+    };
 
-      // Fit camera on the first file that arrives so the user sees content immediately.
-      // Skip repositioning if the user has already started navigating — moving the
-      // camera under them is worse than leaving them to navigate to the model.
-      if (!cameraFitted) {
-        cameraFitted = true;
-        cameraFittedRef.current = true;
-        const center = combinedBox.getCenter(new Vector3());
-        sceneCenterRef.current = center.clone();
-        const size = combinedBox.getSize(new Vector3()).length();
-        camera.near = size * 0.001;
-        camera.far = size * 10;
-        camera.updateProjectionMatrix();
-        semanticLayer.update(elements);
+    // The collision proxy is never drawn (Reveal renders the CAD model); three.js ray-casts
+    // invisible meshes, so picking, smoothed normals and image rays keep working on it.
+    const addProxyToScene = (geometry: BufferGeometry, campaignId: string) => {
+      const proxy = new Mesh(geometry, new MeshBasicMaterial({ side: DoubleSide }));
+      proxy.visible = false;
+      proxy.userData.campaignId = campaignId;
+      campaignGroupFor(campaignId).add(proxy);
+      loadedObjectsRef.current.push(proxy);
+      proxy.updateMatrixWorld();
+      fitCameraOnce(new Box3().setFromObject(proxy));
+    };
 
-        if (!userHasInteracted) {
-          if (initialCameraPose) {
-            camera.position.set(...initialCameraPose.position);
-            const target = new Vector3(...initialCameraPose.target);
-            initialTargetRef.current = target;
-            camera.lookAt(target);
-          } else {
-            camera.position.copy(center).add(new Vector3(0, size * 0.3, size * 0.6));
-            camera.lookAt(center);
-          }
-        }
+    // Layers are downloaded lazily (when toggled on), possibly long after the page fetched the
+    // signed URLs, which CDF expires after ~30 s — so fetch a fresh one right before
+    // downloading. The browser caches are keyed by the URL path, so cache hits are unaffected.
+    const freshUrl = async (key: string, url: string): Promise<string> => {
+      const fileId = Number(key);
+      if (!Number.isSafeInteger(fileId) || fileId <= 0) return url;
+      try {
+        return await getDownloadUrl(sdk, fileId);
+      } catch {
+        return url;
       }
     };
 
-    const loadOnePly = async (url: string, campaignId: string) => {
+    const loadOnePly = async (url: string, campaignId: string, key: string) => {
       if (signal.aborted) return;
       const stableKey = derivePlyKey(url);
 
@@ -865,14 +868,14 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
         // Without this yield, React 18 batches both updateProgress() calls into one render.
         await Promise.resolve();
         if (signal.aborted) return;
-        const { geometry, isMesh, hasFaceColors } = reconstructGeometry(cached);
-        addPlyToScene(geometry, isMesh, campaignId, hasFaceColors);
+        const { geometry } = reconstructGeometry(cached);
+        addProxyToScene(geometry, campaignId);
         downloads.set(url, { loaded: 0, total: 0, done: true, parsing: false, fromCache: true });
         updateProgress();
         return;
       }
 
-      const buffer = await fetchPlyWithCache(url, (loaded, total) => {
+      const buffer = await fetchPlyWithCache(await freshUrl(key, url), (loaded, total) => {
         if (signal.aborted) return;
         downloads.set(url, { loaded, total, done: false, parsing: false, fromCache: false });
         updateProgress();
@@ -905,7 +908,7 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       };
       putCachedParsedPly(stableKey, cachePayload).catch(() => undefined);
 
-      addPlyToScene(geometry, isMesh, campaignId, hasFaceColors);
+      addProxyToScene(geometry, campaignId);
       downloads.set(url, { loaded: prev.total || prev.loaded, total: prev.total || prev.loaded, done: true, parsing: false, fromCache: false });
       updateProgress();
     };
@@ -917,12 +920,12 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
     // parsing every one of their raw meshes at once (see the CDF investigation this
     // fixes: 3 campaigns x ~270MB ASCII PLY loaded concurrently exhausted GPU memory).
     const startedPlyUrls = new Set<string>();
-    triggerPlyLoad = (url: string, campaignId: string) => {
+    triggerPlyLoad = (url: string, campaignId: string, key: string) => {
       if (startedPlyUrls.has(url)) return;
       startedPlyUrls.add(url);
       downloads.set(url, downloads.get(url) ?? { loaded: 0, total: 0, done: false, parsing: false, fromCache: false });
       updateProgress();
-      loadOnePly(url, campaignId).catch((error: unknown) => {
+      loadOnePly(url, campaignId, key).catch((error: unknown) => {
         if (signal.aborted) return;
         console.error(`Failed to load PLY mesh: ${url}`, error);
         const prev = downloads.get(url) ?? { loaded: 0, total: 0, done: false, parsing: false, fromCache: false };
@@ -931,10 +934,41 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       });
     };
 
-    plyEntries.forEach(({ url, campaignId }) => {
+    plyEntries.forEach(({ url, campaignId, key }) => {
       if (!url) return; // URL not resolved yet — the effect reruns once it is.
       if (useLayerVisibilityStore.getState().visibility[campaignId]?.['MESH'] === true) {
-        triggerPlyLoad(url, campaignId);
+        triggerPlyLoad(url, campaignId, key);
+      }
+    });
+
+    // Add a campaign's CAD model the first time its MESH toggle is on (mirrors the lazy PLY /
+    // PCD loading: nothing is streamed for campaigns nobody has asked to see).
+    const startedCadCampaigns = new Set<string>();
+    triggerCadLoad = (cad: CampaignCadModel) => {
+      if (startedCadCampaigns.has(cad.campaignExternalId)) return;
+      startedCadCampaigns.add(cad.campaignExternalId);
+      engine
+        .addCadModel(cad)
+        .then(async (handle) => {
+          if (signal.aborted) return;
+          cadHandlesRef.current.set(cad.campaignExternalId, handle);
+          const visible = useLayerVisibilityStore.getState();
+          handle.setVisible(
+            visible.isEffectivelyVisible('MESH') &&
+              visible.visibility[cad.campaignExternalId]?.['MESH'] === true,
+          );
+          await handle.setColourMode(useColorModeStore.getState().getColorMode('MESH'));
+          fitCameraOnce(handle.boundingBox);
+        })
+        .catch((error: unknown) => {
+          if (signal.aborted) return;
+          console.error(`Failed to load CAD model for campaign ${cad.campaignExternalId}`, error);
+        });
+    };
+
+    cadModels.forEach((cad) => {
+      if (useLayerVisibilityStore.getState().visibility[cad.campaignExternalId]?.['MESH'] === true) {
+        triggerCadLoad(cad);
       }
     });
 
@@ -953,11 +987,12 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       downloads.set(url, downloads.get(url) ?? { loaded: 0, total: 0, done: false, parsing: false, fromCache: false });
       updateProgress();
 
-      fetchPlyWithCache(url, (loaded, total) => {
-        if (signal.aborted) return;
-        downloads.set(url, { loaded, total, done: false, parsing: false, fromCache: false });
-        updateProgress();
-      }, signal)
+      freshUrl(key, url)
+        .then((downloadUrl) => fetchPlyWithCache(downloadUrl, (loaded, total) => {
+          if (signal.aborted) return;
+          downloads.set(url, { loaded, total, done: false, parsing: false, fromCache: false });
+          updateProgress();
+        }, signal))
         .then((buffer) => {
           if (signal.aborted) return;
 
@@ -987,30 +1022,7 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
 
           pcdObjectsRef.current.set(key, points);
           scene.add(points);
-          combinedBox.expandByObject(points);
-
-          if (!cameraFitted) {
-            cameraFitted = true;
-            cameraFittedRef.current = true;
-            const center = combinedBox.getCenter(new Vector3());
-            sceneCenterRef.current = center.clone();
-            const size = combinedBox.getSize(new Vector3()).length();
-            camera.near = size * 0.001;
-            camera.far = size * 10;
-            camera.updateProjectionMatrix();
-            semanticLayer.update(elements);
-            if (!userHasInteracted) {
-              if (initialCameraPose) {
-                camera.position.set(...initialCameraPose.position);
-                const target = new Vector3(...initialCameraPose.target);
-                initialTargetRef.current = target;
-                camera.lookAt(target);
-              } else {
-                camera.position.copy(center).add(new Vector3(0, size * 0.3, size * 0.6));
-                camera.lookAt(center);
-              }
-            }
-          }
+          fitCameraOnce(new Box3().setFromObject(points));
 
           downloads.set(url, { loaded: prev.total || prev.loaded, total: prev.total || prev.loaded, done: true, parsing: false, fromCache: false });
           updateProgress();
@@ -1279,8 +1291,8 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       renderer.domElement.removeEventListener('dblclick', onDoubleClick);
       renderer.domElement.removeEventListener('webglcontextlost', onContextLost);
       controls.dispose();
-      renderer.dispose();
-      container.removeChild(renderer.domElement);
+      cadHandlesRef.current = new Map();
+      engine.dispose();
       semanticLayerRef.current = null;
       ndtLayerRef.current = null;
       planTasksLayerRef.current = null;
@@ -1293,8 +1305,8 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       raycasterRef.current = null;
       hoverDotRef.current = null;
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- plyEntries/pcdUrls are stable per mount; createRenderer/createRaycaster are stable context refs; elements handled below
-  }, [plyEntries, pcdUrls]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- plyEntries/pcdUrls/cadModels are stable per mount; createEngine/createRaycaster/sdk are stable context refs; elements handled below
+  }, [plyEntries, pcdUrls, cadModels]);
 
   useImperativeHandle(ref, () => ({
     clearAllSelections() {

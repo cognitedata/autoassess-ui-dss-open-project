@@ -9,25 +9,29 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Vector3 } from 'three';
 
-import { AUTOASSESS_SPACE } from '../../shared/cdf/dataModel';
 import logo from '../../../assets/autoassess-logo.png';
+import { AUTOASSESS_SPACE } from '../../shared/cdf/dataModel';
+import { useSetGroundPlane, useSetDefaultCameraPose } from '../areas/useMutateArea';
 
+import { AreaSettingsModal } from './AreaSettingsModal';
+import { formatCameraParam, parseCameraParam } from './cameraParam';
+import type { CameraPose } from './cameraParam';
 import type { DefectDetection, DefectUpdates } from './DefectDetectionService';
 import type { InspectionTask, InspectionType } from './InspectionTaskService';
 import type { PlyViewerHandle } from './PlyViewer';
+import { MissingCadModelNotice } from './reveal/MissingCadModelNotice';
+import { useCampaignCadModels } from './reveal/useCampaignCadModels';
 import type { SelectionHit } from './selection';
-import { useViewerControlsModeStore } from './viewerControlsModeStore';
 import { SelectionPanel } from './SelectionPanel';
 import { useDefectsPanelViewModel } from './useDefectsPanelViewModel';
+import { useDroneImages, useDroneImageDownloadUrl } from './useDroneImages';
 import { useInspectionPlansViewModel } from './useInspectionPlansViewModel';
 import { useLayerPanelViewModel } from './useLayerPanelViewModel';
 import { useNdtMeasurements } from './useNdtMeasurements';
-import { useDroneImages, useDroneImageDownloadUrl } from './useDroneImages';
 import { usePlyUrls } from './usePlyUrls';
-import { useSetGroundPlane, useSetDefaultCameraPose } from '../areas/useMutateArea';
 import { useViewerViewModel } from './useViewerViewModel';
 import { ViewerControlsModal } from './ViewerControlsModal';
-import { AreaSettingsModal } from './AreaSettingsModal';
+import { useViewerControlsModeStore } from './viewerControlsModeStore';
 import { ViewerRightPanel } from './ViewerRightPanel';
 import type { RightPanelTab } from './ViewerRightPanel';
 
@@ -60,21 +64,42 @@ export function ViewerPage() {
     droneImageCampaignIds,
   );
 
-  // Fetch PLY download URLs for all campaigns — keyed by campaign PLY file IDs.
-  const plyFileIds = useMemo(
-    () => layerPanelViewModel.allPlyEntries.map((e) => Number(e.key)),
+  // Campaigns with an uploaded mesh. The viewer renders each as a CDF CAD model (streamed by
+  // Reveal), built from the mesh by `dss campaign upload` / `dss campaign build-3d-model`.
+  const meshCampaignIds = useMemo(
+    () => [...new Set(layerPanelViewModel.allPlyEntries.map((e) => e.campaignId))],
     [layerPanelViewModel.allPlyEntries],
   );
-  const plyUrlsResult = usePlyUrls(plyFileIds);
+  const cadModelsResult = useCampaignCadModels(meshCampaignIds);
+  const cadModels = useMemo(
+    () => (cadModelsResult.data ?? []).filter((m) => m.status === 'Done'),
+    [cadModelsResult.data],
+  );
+  const campaignsWithoutModel = useMemo(
+    () => (cadModelsResult.isSuccess
+      ? meshCampaignIds.filter((id) => !cadModels.some((m) => m.campaignExternalId === id))
+      : []),
+    [cadModelsResult.isSuccess, meshCampaignIds, cadModels],
+  );
+  const processingCampaignIds = useMemo(
+    () => new Set((cadModelsResult.data ?? [])
+      .filter((m) => m.status !== 'Done' && m.status !== 'Failed')
+      .map((m) => m.campaignExternalId)),
+    [cadModelsResult.data],
+  );
+
+  // Each CAD model's collision proxy (small decimated PLY) — ray-cast for picking and normals.
+  const proxyFileIds = useMemo(() => cadModels.map((m) => m.collisionProxyFileId), [cadModels]);
+  const proxyUrlsResult = usePlyUrls(proxyFileIds);
   // Memoized so the array reference is stable across re-renders triggered by visibility
   // changes — prevents PlyViewer's useEffect from re-firing and resetting the camera.
   const plyEntries = useMemo(
-    () => layerPanelViewModel.allPlyEntries.map((e, i) => ({
-      key: e.key,
-      campaignId: e.campaignId,
-      url: plyUrlsResult.data?.[i] ?? '',
+    () => cadModels.map((m, i) => ({
+      key: String(m.collisionProxyFileId),
+      campaignId: m.campaignExternalId,
+      url: proxyUrlsResult.data?.[i] ?? '',
     })),
-    [layerPanelViewModel.allPlyEntries, plyUrlsResult.data],
+    [cadModels, proxyUrlsResult.data],
   );
 
   const pcdUrlsResult = usePlyUrls(layerPanelViewModel.allPcdFileIds);
@@ -123,6 +148,23 @@ export function ViewerPage() {
   // Auto-fly when navigated from the mission report with ?flyToImage=<externalId>
   const [searchParams, setSearchParams] = useSearchParams();
   const flyToImageIdParam = searchParams.get('flyToImage');
+  // ?camera=px,py,pz,tx,ty,tz overrides the area's default start pose (shareable views, regression shots)
+  const cameraParam = searchParams.get('camera');
+  const cameraParamPose = useMemo(() => parseCameraParam(cameraParam), [cameraParam]);
+  // Keep the current view in ?camera= so a copied Fusion link reopens the same view.
+  const handleCameraSettled = useCallback(
+    (pose: CameraPose) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('camera', formatCameraParam(pose));
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
   const hasFiredFlyTo = useRef(false);
   useEffect(() => {
     if (!flyToImageIdParam || hasFiredFlyTo.current || !viewerMounted) return;
@@ -365,6 +407,8 @@ export function ViewerPage() {
               <PlyViewer
                 ref={plyViewerCallbackRef}
                 plyEntries={plyEntries}
+                cadModels={cadModels}
+                onCameraSettled={handleCameraSettled}
                 pcdUrls={pcdEntries}
                 elements={elements}
                 ndtMeasurements={ndtMeasurements}
@@ -373,21 +417,50 @@ export function ViewerPage() {
                 onHitSelected={setSelection}
                 groundPlane={area?.groundPlane}
                 initialCameraPose={
-                  area?.initialCameraPosition && area?.initialCameraTarget
+                  cameraParamPose ??
+                  (area?.initialCameraPosition && area?.initialCameraTarget
                     ? { position: area.initialCameraPosition, target: area.initialCameraTarget }
-                    : undefined
+                    : undefined)
                 }
               />
             </Suspense>
           )}
 
-          {!isLoading && !error && area != null && !hasModel && (
+          {!isLoading && !error && area != null && cadModelsResult.isError && (
+            <div
+              className="absolute left-4 top-4 max-w-md rounded-lg bg-black/60 px-4 py-3 text-sm text-white backdrop-blur-sm"
+              data-testid="cad-model-load-error"
+              role="alert"
+            >
+              Couldn't load the 3D models: {cadModelsResult.error.message}. Reload the page; if it keeps
+              failing, check that your account can read CDF 3D models.
+            </div>
+          )}
+
+          {!isLoading && !error && area != null && hasModel && campaignsWithoutModel.length > 0 && (
+            <MissingCadModelNotice
+              campaignIds={campaignsWithoutModel}
+              processingCampaignIds={processingCampaignIds}
+              className="absolute left-4 top-4 max-w-md"
+            />
+          )}
+
+          {!isLoading && !error && area != null && !hasModel && !cadModelsResult.isError && (
             <div className="flex h-full flex-col items-center justify-center text-center">
-              <p className="text-base font-medium text-foreground">3D model not yet uploaded</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                Run <code className="font-mono">dss campaign upload &lt;folder&gt;</code> to upload
-                inspection data.
-              </p>
+              {campaignsWithoutModel.length > 0 ? (
+                <MissingCadModelNotice
+                  campaignIds={campaignsWithoutModel}
+                  processingCampaignIds={processingCampaignIds}
+                />
+              ) : (
+                <>
+                  <p className="text-base font-medium text-foreground">3D model not yet uploaded</p>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    Run <code className="font-mono">dss campaign upload &lt;folder&gt;</code> to upload
+                    inspection data.
+                  </p>
+                </>
+              )}
             </div>
           )}
         </div>
