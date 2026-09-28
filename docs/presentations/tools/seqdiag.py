@@ -165,13 +165,13 @@ PART2 = [
     ("msg", "gs", "drone", f"{C('generate_mesh')} → save map PLY"),
     ("msg", "gs", "cdf", "upload mesh + files (CogniteFiles)"),
     ("msg", "gs", "cdf", f"create campaign → {C('Complete')}"),
-    ("msg", "gs", "cdf", f"create findings plan ({C('Draft')})"),
+    ("msg", "gs", "cdf", f"create defect detections ({C('New')})"),
     ("gap", 8),
     ("msg", "gs", "cdf", "dss worker (ROS-launched): build 3D models"),
     ("gap", 8),
-    ("msg", "insp", "web", "Review campaign + findings plan"),
+    ("msg", "insp", "web", "Review campaign + detected defects"),
     ("msg", "web", "cdf", "stream 3D model; edit campaign/plan"),
-    ("msg", "insp", "web", f"Findings plan → {C('Ready')}: next mission"),
+    ("msg", "insp", "web", "Confirm defects → Suggestions → next plan Ready"),
 ]
 
 if __name__ == "__main__":
