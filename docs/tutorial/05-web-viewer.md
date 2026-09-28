@@ -43,7 +43,20 @@ In the viewer, try:
 3. **Plans** tab: create a plan (choose reference map), make it active, then use "add to active plan" from the selection panel. Toggle Draft ↔ Ready.
 4. **Defects** tab: fly to, change status, delete; create a manual defect from a surface click.
 5. Click a drone image marker to see the photo. Hovering over it casts a ray into the 3D scene.
-6. **Suggestions** (on a Draft plan): recommended follow-up tasks from [`src/features/recommendations/recommendationRules.ts`](../../src/features/recommendations/recommendationRules.ts) (for example, NDT readings < 10 mm and Confirmed defects).
+6. **Edit a campaign**: in the Layers tab, open a campaign's **⋮** menu → **Edit campaign** (see below).
+7. **Suggestions** (on a Draft plan): recommended follow-up tasks from [`src/features/recommendations/recommendationRules.ts`](../../src/features/recommendations/recommendationRules.ts) (for example, NDT readings < 10 mm and Confirmed defects).
+
+### Editing campaigns
+
+A campaign is only a date plus lists of file ids, so you can change it after the upload:
+
+- **⋮ → Edit campaign** changes the **date** and **which uploaded files belong to it**. The dialog lists every mesh and point cloud uploaded to the area (CogniteFiles tagged `area:<id>`), the campaign they're in now, and each mesh's 3D model state: *3D model ready*, *processing*, *waiting for dss worker*, or *in the campaign's 3D model* (a legacy campaign-keyed model).
+- **New campaign from files** (below the campaign list) makes a campaign out of the files you pick, for example files the robot uploaded that should be split into two missions.
+- **A file belongs to one campaign.** Picking a file that another campaign has moves it: saving removes it from the other campaign in the same write. Its 3D model moves with it, since models belong to files, not campaigns ([chapter 2](02-data-model.md#3d-models-core-dm)).
+- Saving only upserts the campaign nodes' `campaignDate`, `cdfFileIds`, `pcdFileIds` and `pcdFileLabels` (new campaigns also get `area`, `status: Complete` and `createdBy: autoassess-web`). Files and 3D models are never changed or deleted.
+- A campaign can't be renamed: its external id is its identity, and campaigns have no name (the viewer shows "Campaign <date>"). Change the date, or make a new campaign from its files.
+
+Code: `src/features/viewer/campaigns/` (`useEditCampaignViewModel`, `EditCampaignDialog`, the pure `planCampaignSave`, `AreaFileService`).
 
 ### Sharing a view
 
@@ -55,7 +68,7 @@ The meshes are **CDF 3D models streamed by [Cognite Reveal](https://www.npmjs.co
 
 ```mermaid
 flowchart LR
-  A[useLayerPanelViewModel<br/>campaigns with a mesh] --> B[useCampaignCadModels<br/>Core DM cad-model / cad-revision nodes]
+  A[useLayerPanelViewModel<br/>campaigns + their mesh file ids] --> B[useCampaignCadModels<br/>file id → CogniteFile → file-cad-model<br/>else legacy campaign-cad-model]
   B -->|model + revision id| R[Reveal engine<br/>reveal/revealEngine.ts<br/>streams CAD sectors]
   B -->|collision proxy file id| C[usePlyUrls → plyCache → plyWorker<br/>small decimated PLY]
   C --> P[invisible proxy mesh<br/>picking, normals, image rays]
@@ -68,7 +81,8 @@ flowchart LR
 - `PlyViewer` owns the camera, controls, fly-to and all overlay layers. `reveal/ExternalCameraManager.ts` hands its camera to Reveal, and the overlays are added with `viewer.addObject3D`.
 - Reveal's picking returns no surface normals, so double-click picking, the hover ring and image-pixel rays ray-cast the **collision proxy** (never drawn).
 - Colour modes: *Colorization* shows the baked camera texture, or a flat colour for meshes without camera RGB; *Defects* shows the segment colours (the CAD nodes are styled by name).
-- Only campaigns whose Mesh toggle is on are streamed. Campaigns without a finished model show a notice with the `dss campaign build-3d-model` command.
+- A campaign shows one model per mesh file it lists (plus its legacy campaign model for older meshes). Only campaigns whose Mesh toggle is on are streamed.
+- Meshes without a model yet show a notice ("3D model being built by `dss worker`", with the `dss campaign build-3d-model` command as a fallback); the viewer polls every 30 s and shows the model when it's there. An area with no mesh at all says "No scan data yet".
 - PCD point clouds are still loaded client-side. Reveal's point-cloud decoder needs `connect-src data:`, which the Flows CSP doesn't allow.
 - Layers: `MeshLayer`, `SemanticLayer`, `NdtMeasurementLayer`, `PlanTasksLayer`, `ImageLayer`, `DefectDetectionLayer`, `SelectionLayer` (all in `src/features/viewer/`).
 - The initial camera comes from the area's `initialCameraPosition` / `initialCameraTarget` / `groundPlane`.

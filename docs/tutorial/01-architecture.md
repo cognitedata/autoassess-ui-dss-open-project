@@ -52,12 +52,15 @@ sequenceDiagram
   GS->>CDF: 4. dss plan download  →  plan.json
   GS->>CDF: 5. dss plan download-map  →  reference .ply/.pcd
   GS->>R: 6. Hand plan + map to robot (robot decides task order)
-  R-->>GS: 7. Mission output folder (.ply, .pcd, UT .csv, ssg.yaml, metrics.yaml, images)
-  GS->>CDF: 8. dss campaign upload / upload-drone-images  →  new InspectionResult ("campaign")
-  GS->>CDF: 9. Mark campaign Complete (and plan Complete)
-  Insp->>CDF: 10. Review in 3D viewer + campaign report, triage defects
+  R->>CDF: 7. Mission ends: autoassess_bridge uploads the mesh and creates the campaign (InProgress → Complete)
+  GS->>CDF: 8. dss worker (always running) builds the mesh's CDF 3D model
+  GS->>CDF: 8b. Other output (UT .csv, ssg.yaml, metrics.yaml, images): dss campaign upload / upload-drone-images
+  Insp->>CDF: 9. Review in 3D viewer + campaign report, triage defects; fix the campaign's date or files if needed
+  Insp->>CDF: 10. Mark the plan Complete
   Insp->>CDF: 11. Suggestions → new plan for next mission
 ```
+
+Steps 7 and 8 need nobody at a keyboard. The robot's ROS node `autoassess_bridge` uploads the map when it detects the end of a mission (or when its `~upload_mission` service is called) and creates the campaign itself. `dss worker` notices every new mesh file and builds its 3D model. Without the bridge, `dss campaign upload <folder>` does step 7 by hand. The plan stays Ready until an inspector marks it Complete.
 
 Vocabulary you'll hear:
 
@@ -67,7 +70,7 @@ Vocabulary you'll hear:
 | **Area** | A confined space on a vessel (e.g. a ballast water tank `BWT` or cargo hold `CH`). All 3D data is per area. |
 | **Inspection plan** | A set of tasks for one area. Status `Draft` → `Ready` → `Complete`. |
 | **Task** | *Element task* (inspect a structural element, e.g. a manhole) or *region task* (inspect a surface point with normal + radius). Inspection type `visual` or `ndt_thickness`. |
-| **Campaign** / **Inspection result** | One executed mission. Holds the uploaded map files and all measured data. Stored as `InspectionResult` nodes. |
+| **Campaign** / **Inspection result** | One executed mission. Lists the uploaded map files (editable in the viewer) and holds all measured data. Stored as `InspectionResult` nodes. |
 | **Reference map** | A completed campaign that a new plan's coordinates refer to. The robot localises against it. |
 | **Structural element** | A labelled semantic object in the area (manhole, longitudinal, wall, compartment), produced by the scene-graph (`ssg.yaml`). |
 

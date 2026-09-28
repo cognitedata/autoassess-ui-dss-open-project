@@ -12,7 +12,7 @@ Replace `<prefix>` with your partner prefix throughout.
 2. **Add vessel** named `<prefix> – Test Vessel`.
 3. Open it, then **Add area** `BWT 1`, type `BWT`.
 
-✅ You should see the area in the list. Opening it shows an empty viewer with a hint to run `dss campaign upload`.
+✅ You should see the area in the list. Opening it shows an empty viewer saying "No scan data yet".
 
 ### ☐ Step 2 (ground station): Upload a first "mapping" mission
 

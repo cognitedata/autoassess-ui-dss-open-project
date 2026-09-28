@@ -5,6 +5,7 @@ The [`sdk/`](../../sdk) project is a Python 3.12 package called `uidss`. It inst
 - **Down:** fetch a Ready inspection plan and its reference map
 - **Plan:** turn a CSV of findings from a detection pipeline into a Draft plan
 - **Up:** push mission output (maps, structural elements, UT thickness, metrics, drone images)
+- **Automatic:** `dss worker` builds the 3D model of every mesh that the robot (or anyone) uploads
 
 Prerequisite: [chapter 3](03-setup-credentials.md) done (`sdk/.env` set up, `uv run dss plan list` works). All commands below are run from `sdk/`.
 
@@ -12,7 +13,7 @@ Prerequisite: [chapter 3](03-setup-credentials.md) done (`sdk/.env` set up, `uv 
 
 ## Part 1: The CLI
 
-Most commands are **interactive**. They walk you through vessel, then area, then plan or campaign with arrow-key pickers, and skip a picker when there's only one choice. `plan import-findings` and `campaign build-3d-model` also take flags, so they can run unattended. Add `-v` for debug logging: `uv run dss -v plan list`.
+Most commands are **interactive**. They walk you through vessel, then area, then plan or campaign with arrow-key pickers, and skip a picker when there's only one choice. `plan import-findings`, `campaign build-3d-model` and `worker` also take flags, so they can run unattended. Add `-v` for debug logging: `uv run dss -v plan list`.
 
 > 💡 Tip: `source .venv/bin/activate` lets you type `dss` instead of `uv run dss`.
 
@@ -92,7 +93,7 @@ The folder is scanned **recursively**, and files are recognised by extension or 
 What happens during the upload:
 1. Pick vessel and area, then pick an existing campaign or **create a new one** (you're asked for the date, default today).
 2. Confirm each file.
-3. **After the PLY upload, the mesh is converted into a CDF 3D model**, which is what the web viewer streams (it doesn't draw raw PLY files). This takes a few minutes and runs locally, then CDF processes the model (about 1 minute). Pass `--no-3d-model` to skip it, for example on a slow link; you can build it later with `build-3d-model` (below).
+3. **After the PLY upload, each mesh is converted into its own CDF 3D model**, which is what the web viewer streams (it doesn't draw raw PLY files). This takes a few minutes and runs locally, then CDF processes the model (about 1 minute). Pass `--no-3d-model` to leave it to `dss worker` (1.4c), for example on a slow link, or build it later with `build-3d-model` (below).
 4. At the end, optionally mark the campaign **Complete** and the Ready plan **Complete**.
 
 Re-running on the same campaign **adds** files. Every upload creates a **new** `CogniteFile`, so re-uploading the same file duplicates it.
@@ -104,7 +105,7 @@ uv run dss campaign build-3d-model                       # interactive pickers
 uv run dss campaign build-3d-model --campaign result-…   # non-interactive
 ```
 
-For campaigns uploaded before 3D models existed, or with `--no-3d-model`. It downloads the campaign's PLY mesh(es), converts them to an OBJ zip, bakes the camera colours into textures if the mesh has them, and builds a small decimated **collision proxy** the viewer uses for picking. It uploads both as CogniteFiles, creates the CDF 3D model, and writes the Core DM nodes `{campaign}-cad-model` / `{campaign}-cad-revision` that the viewer looks up ([chapter 2](02-data-model.md#3d-models-core-dm)). Nothing existing is modified. The viewer shows a "3D model not built yet" notice with this command for every campaign that still needs it.
+Builds the models of the campaign's mesh files that don't have one yet, one model per file, the same as `dss worker` but for one campaign and right now. For each mesh it downloads the PLY, converts it to an OBJ zip, bakes the camera colours into textures if the mesh has them, and builds a small decimated **collision proxy** the viewer uses for picking. It uploads both as CogniteFiles, creates the CDF 3D model, and writes the Core DM nodes `{file}-cad-model` / `{file}-cad-revision` that the viewer looks up ([chapter 2](02-data-model.md#3d-models-core-dm)). Meshes that already have a model, or that the campaign's legacy (campaign-keyed) model already shows, are skipped; classic files (no CogniteFile) are reported and skipped. Nothing existing is modified.
 
 #### Sample files (in the repo)
 
@@ -132,6 +133,60 @@ metrics:
     value: 91.3
     unit: percentage   # or: decimal
 ```
+
+### 1.4c Automatic: the robot uploads, `dss worker` builds
+
+```bash
+uv run dss worker                        # all areas, check every 30 s
+uv run dss worker --area area-… --poll 60
+uv run dss worker --area area-… --once   # build what's missing, then exit
+```
+
+`dss worker` lists the uploaded mesh CogniteFiles (tag `ply_mesh`, optionally of one area) and builds the 3D model of each one that has none, oldest first, one at a time. **The upload is the trigger**: a mesh from the robot, from `dss campaign upload --no-3d-model` or from your own script gets its model whether or not it's in a campaign yet. The viewer picks the model up by itself (it polls while meshes are waiting).
+
+- It skips meshes a legacy campaign model already shows, and re-checks just before creating a model, so a model built meanwhile by `dss campaign upload` isn't built twice.
+- A failing mesh (for example a truncated PLY) is retried after 1, 2, 4… minutes (at most 1 hour) and given up after 5 attempts until the worker restarts. The other meshes are still built. A tick that can't reach CDF is logged and the next one runs.
+- It also refreshes the status of models CDF is still processing, for example after a restart.
+
+Run it at boot on the ground station. **systemd** (Linux), `/etc/systemd/system/dss-worker.service`:
+
+```ini
+[Unit]
+Description=AutoAssess dss worker (builds 3D models of uploaded meshes)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=/opt/autoassess-ui-dss/sdk
+ExecStart=/usr/local/bin/uv run dss worker --poll 30
+Restart=always
+RestartSec=30
+User=autoassess
+
+[Install]
+WantedBy=multi-user.target
+```
+
+`sudo systemctl enable --now dss-worker`, logs with `journalctl -u dss-worker -f`. **launchd** (macOS), `~/Library/LaunchAgents/com.cognite.dss-worker.plist`:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.cognite.dss-worker</string>
+  <key>WorkingDirectory</key><string>/Users/you/autoassess-ui-dss/sdk</string>
+  <key>ProgramArguments</key>
+  <array><string>/opt/homebrew/bin/uv</string><string>run</string><string>dss</string><string>worker</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/tmp/dss-worker.log</string>
+  <key>StandardErrorPath</key><string>/tmp/dss-worker.log</string>
+</dict></plist>
+```
+
+`launchctl load ~/Library/LaunchAgents/com.cognite.dss-worker.plist`. The working directory must be `sdk/` so the worker finds `.env`; its service account needs write access to files, 3D and data modeling in the `autoassess` space.
+
+**The robot side: `autoassess_bridge`.** The ROS node in the gbplanner_ros repo uploads the mission itself, with the same file conventions as `dss` (CogniteFile, tags `ply_mesh` + `area:<id>`, plus `plan:<id>` and `mission:<id>`). When it detects the end of a mission (a mission path, then homing, then no new path and the robot standing still), or when its `~upload_mission` service is called, it asks gbplanner for the mesh, uploads it and the `~mission_dir` files, and creates the campaign: `result-<uuid>`, today's date, `createdBy=autoassess_bridge`, `InProgress` and then `Complete` once every upload succeeded. It publishes its progress on `/autoassess/upload_status`. Uploads are off unless `~upload_enabled` is true; see the bridge's README for its parameters and credentials. It doesn't build models; `dss worker` does.
 
 ### 1.5 Upload drone images (TUM format)
 
@@ -233,8 +288,9 @@ client = UidssClient.from_env()   # reads COGNITE_* from env / ./.env
 | `client.vessels` | `list()` |
 | `client.areas` | `list(vessel_space, vessel_external_id)` |
 | `client.plans` | `list(area_space, area_eid)`, `list_tasks(plan_eid)`, `count_tasks([eids])`, `download(space, eid, area_name, output_path)`, `update_status(space, eid, "Draft"\|"Ready"\|"Complete")`, `create(area_eid, map_eid, name, description) -> eid` (Draft), `add_region_tasks(plan_eid, [NewRegionTask]) -> [task_eid]` |
-| `client.campaigns` | `list(area_space, area_eid)`, `get(space, eid)`, `create(area_eid, "YYYY-MM-DD") -> eid`, `update_file_ids(space, eid, ply_ids, pcd_ids, pcd_labels)` ⚠️ overwrites, `complete(space, eid)`, `download_map(space, eid, out_dir)`, `download_collision_proxy(campaign_eid, out_dir) -> Path \| None` |
-| `client.artifacts` | `upload_ply(path, area_eid) -> file_id`, `upload_pcd(path, area_eid, label) -> file_id` |
+| `client.campaigns` | `list(area_space, area_eid)`, `get(space, eid)`, `create(area_eid, "YYYY-MM-DD") -> eid`, `update_file_ids(space, eid, ply_ids, pcd_ids, pcd_labels)` ⚠️ overwrites, `complete(space, eid)`, `download_map(space, eid, out_dir)`, `download_collision_proxies(campaign_eid, out_dir) -> [Path]` (one per 3D model the campaign shows) |
+| `client.artifacts` | `upload_ply(path, area_eid) -> file_id`, `upload_pcd(path, area_eid, label) -> file_id`, `list_mesh_files(area_eid=None) -> [MeshFile]`, `get_mesh_files([file_id]) -> [MeshFile]`, `download(mesh, out_dir) -> Path` |
+| `client.threed` | `find_models_for_files([file_xid]) -> {file_xid: CadModel}`, `find_campaign_models([campaign_eid])` (legacy), `create_cad_model_for_file(...)`, `wait_until_processed(model)`; build one with `uidss.threed.pipeline.build_file_cad_model(ply, mesh, client.threed, work_dir)`, or run `uidss.worker.ModelWorker` |
 | `client.structural_elements` | `upsert_from_ssg(area_eid, ssg_path)` |
 | `client.measurements` | `create_from_csv(path, campaign_eid)`, `missing_columns(path)` |
 | `client.campaign_metrics` | `upsert_from_yaml(path, campaign_eid)`, `list_for_campaign(campaign_eid)` |
@@ -310,7 +366,7 @@ from pathlib import Path
 
 from uidss import UidssClient
 from uidss.findings import filter_findings, plan_tasks_from_findings, read_findings_csv
-from uidss.threed.ply import read_ply
+from uidss.threed.ply import merge_meshes, read_ply
 
 client = UidssClient.from_env()
 AREA_EID = "area-01581"
@@ -321,9 +377,9 @@ for err in row_errors:
     print(f"line {err.line}: {err.message}")
 findings = filter_findings(findings, min_confidence=0.5)
 
-with tempfile.TemporaryDirectory() as tmp:     # the 3D model's collision proxy, for normals
-    proxy = client.campaigns.download_collision_proxy(MAP_EID, Path(tmp))
-    mesh = read_ply(proxy) if proxy else None
+with tempfile.TemporaryDirectory() as tmp:     # the 3D models' collision proxies, for normals
+    proxies = client.campaigns.download_collision_proxies(MAP_EID, Path(tmp))
+    mesh = merge_meshes([read_ply(p) for p in proxies]) if proxies else None
 
 result = plan_tasks_from_findings(findings, mesh=mesh, merge_radius_m=0.5)
 print(f"{len(result.tasks)} tasks, {result.count('model')} normals from the model")
@@ -355,7 +411,7 @@ just fix         # auto-fix lint/format
 just test-all    # + integration tests against real CDF (needs .env)
 just coverage
 ```
-✅ `just test` runs with no network access. At the time of writing, ~376 tests pass and 2 fail in `tests/unit/test_vessel_area_service.py`. Those two are known and unrelated to your changes.
+✅ `just test` runs with no network access. At the time of writing, ~434 tests pass and 2 fail in `tests/unit/test_vessel_area_service.py`. Those two are known and unrelated to your changes.
 
 Where to add things:
 - New CLI command: [`sdk/src/uidss/cli/main.py`](../../sdk/src/uidss/cli/main.py) (Typer), prompts in `cli/selectors.py`

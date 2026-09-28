@@ -67,7 +67,7 @@ How files and data-model nodes are linked, which surprises people:
 - **A CogniteFile has both an instance ID and a numeric file ID.** The instance ID is `{space, externalId}`; CDF also assigns every file a numeric `id`.
 - **Our views reference files by that numeric ID in plain `int64` properties**, not by direct relations: `InspectionResult.cdfFileIds[]` (PLY), `pcdFileIds[]` (PCD) and `DroneImage.cdfFileId`. Nothing enforces these links: a file can exist without being referenced (an orphan), and an ID can point to a deleted file. Numeric IDs are always ≤ 2^53−1, so they are exact as JavaScript numbers.
 - **A file only "belongs" to a campaign if its ID is in that campaign's list.** Uploading a file doesn't attach it. `dss campaign upload` uploads and then updates the lists. In your own code you must call `campaigns.update_file_ids(...)` yourself.
-- **Tags are informational only.** The SDK tags files `["autoassess", "ply_mesh" | "pcd_pointcloud" | "drone_image", "area:<id>" | "campaign:<id>", "label:<label>"]`, but nothing reads tags for linking. Always read the ID lists from the `InspectionResult`.
+- **Tags find files, the ID lists link them.** The SDK tags files `["autoassess", "ply_mesh" | "pcd_pointcloud" | "drone_image", "area:<id>" | "campaign:<id>", "label:<label>"]`. `dss worker` finds new meshes by `ply_mesh`, and the viewer's edit-campaign dialog lists an area's files by `area:<id>`. Which campaign a file belongs to is still only the `InspectionResult`'s ID lists.
 - **Every PLY/PCD upload creates a new file** (unique external ID `{area}-file-{random}-{name}`). Uploading the same `mesh.ply` twice gives two files. Always resolve files by ID, never by name.
 - **Legacy data:** files uploaded before the CogniteFile switch (and by `scripts/upload-3d.ts`, which still uses the classic API) are classic files with no instance ID. They still work by numeric ID, but don't create new ones.
 - **The web app downloads by numeric ID** (`files.getDownloadUrls([{ id }])`). The URLs expire, which is why the viewer refreshes them every 50 minutes.
@@ -80,17 +80,21 @@ Other DM quirks:
 
 ## 3D models (Core DM)
 
-The viewer renders each campaign's mesh as a **CDF 3D model** streamed by Cognite Reveal, not the raw PLY. Per campaign, `dss` writes:
+The viewer renders meshes as **CDF 3D models** streamed by Cognite Reveal, not the raw PLY. **Every mesh file gets its own model**, keyed by the mesh CogniteFile's external id `{file}`. `dss worker` (or `dss campaign build-3d-model`) writes:
 
 | Resource | Id | Contents |
 |---|---|---|
-| CogniteFile | `{campaign}-cad-source` | OBJ + MTL (+ textures) zip, the source of the 3D revision |
-| CogniteFile | `{campaign}-collision-proxy` | Decimated binary PLY (≤ 200k faces), used for picking and surface normals |
+| CogniteFile | `{file}-cad-source` | OBJ + MTL (+ textures) zip, the source of the 3D revision |
+| CogniteFile | `{file}-collision-proxy` | Decimated binary PLY (≤ 200k faces), used for picking and surface normals |
 | 3D model + revision | numeric ids | Created with the 3D API from the zip's numeric file id |
-| `CogniteCADModel` node | `{campaign}-cad-model` | `tags` hold `threeDModelId:<id>` and `collisionProxyFileId:<id>`; `description` holds the segment-colour palette as JSON |
-| `CogniteCADRevision` node | `{campaign}-cad-revision` | `revisionId`, `status`, `model3D` → the model node |
+| `CogniteCADModel` node | `{file}-cad-model` | `tags` hold `sourceFileId:<id>`, `area:<id>`, `threeDModelId:<id>` and `collisionProxyFileId:<id>`; `description` holds the segment-colour palette as JSON |
+| `CogniteCADRevision` node | `{file}-cad-revision` | `revisionId`, `status`, `model3D` → the model node |
 
-`CogniteCADModel` has no property for the classic 3D model id, which is why it's in the tags.
+If `{file}` plus the suffix is longer than 255 characters, `{file}` is cut to fit (`derived_id` in the SDK, `derivedId` in the viewer). `CogniteCADModel` has no property for the classic 3D model id, which is why it's in the tags.
+
+**A campaign shows the models of the files it lists now.** The viewer resolves each id in `cdfFileIds` to its CogniteFile and looks up `{file}-cad-model`. Moving a file to another campaign, merging two campaigns or changing the date only edits the campaign node; no model is rebuilt.
+
+**Legacy models.** Models built before per-file models are keyed by campaign: `{campaign}-cad-model` / `{campaign}-cad-revision`, merging all the campaign's meshes. They are left as they are. The viewer shows one for the campaign's meshes that have no model of their own and were uploaded before it (and for classic files, which can't get one). `dss worker` skips those meshes too. A mesh added to such a campaign later gets its own model.
 
 Also, the `CogniteCADRevision` view only matches nodes whose `cdf_cdm_3d:Cognite3DModel.type` is `"CAD"`, set on the revision node itself. `dss` writes that; if you create these nodes yourself, write it too, or the viewer won't find them.
 

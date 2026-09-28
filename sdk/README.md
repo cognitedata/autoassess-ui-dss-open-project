@@ -88,6 +88,16 @@ the plan Ready. Sample CSV: [`tests/fixtures/findings.csv`](tests/fixtures/findi
 
 ---
 
+### `dss worker` — Build 3D models automatically
+
+```bash
+dss worker [--area <area external id>] [--poll 30] [--once]
+```
+
+Watches the uploaded mesh CogniteFiles (tag `ply_mesh`) and builds the CDF 3D model of each one that has none (`{file}-cad-model`), one at a time. The robot's `autoassess_bridge` and `dss campaign upload --no-3d-model` only upload; the worker does the rest. Failing meshes are retried with backoff and given up after 5 attempts. Run it at boot (systemd/launchd examples in [the tutorial, chapter 4](../docs/tutorial/04-ground-station-sdk.md#14c-automatic-the-robot-uploads-dss-worker-builds)). `dss campaign build-3d-model --campaign <id>` does the same for one campaign, right away.
+
+---
+
 ### `dss campaign` — Mission upload commands
 
 #### Upload mission artifacts
