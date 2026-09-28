@@ -49,19 +49,23 @@ from uidss.findings import (
     read_findings_csv,
     require_normals,
 )
-from uidss.models import Area, InspectionType, Vessel
+from uidss.models import Area, InspectionType, MeshFile, Vessel
 from uidss.services.area_service import AreaServiceProtocol, CdfAreaService
-from uidss.services.artifact_service import CdfArtifactService
+from uidss.services.artifact_service import CdfArtifactService, MeshFileServiceProtocol
 from uidss.services.campaign_metric_service import CdfCampaignMetricService
 from uidss.services.campaign_service import CampaignServiceProtocol, CdfCampaignService
 from uidss.services.drone_image_service import CdfDroneImageService
 from uidss.services.ndt_measurement_service import CdfNdtMeasurementService
 from uidss.services.plan_service import CdfPlanService, PlanServiceProtocol
 from uidss.services.structural_element_service import CdfStructuralElementService
-from uidss.services.threed_service import CdfThreeDService, ThreeDServiceProtocol
+from uidss.services.threed_service import (
+    CdfThreeDService,
+    ThreeDServiceProtocol,
+    covered_by_legacy,
+)
 from uidss.services.vessel_service import CdfVesselService, VesselServiceProtocol
-from uidss.threed.pipeline import build_campaign_cad_model
-from uidss.threed.ply import PlyMesh, read_ply
+from uidss.threed.pipeline import build_file_cad_model
+from uidss.threed.ply import PlyMesh, merge_meshes, read_ply
 
 log = structlog.get_logger()
 console = Console()
@@ -136,12 +140,12 @@ def _get_client() -> tuple[
 
 
 def _build_and_wait(
-    threed_svc: ThreeDServiceProtocol, campaign_id: str, ply_paths: list[Path], work_dir: Path
+    threed_svc: ThreeDServiceProtocol, ply_path: Path, source: MeshFile, work_dir: Path
 ) -> None:
-    """Convert the campaign's PLY(s) to a CDF CAD model and wait until Reveal can load it."""
-    with console.status("  Converting mesh for the 3D viewer (this can take minutes)..."):
-        model = build_campaign_cad_model(
-            ply_paths, campaign_id, threed_svc, work_dir, workers=os.cpu_count() or 1
+    """Convert one mesh file to its CDF CAD model and wait until Reveal can load it."""
+    with console.status(f"  Converting {source.name} for the 3D viewer (this can take minutes)..."):
+        model = build_file_cad_model(
+            ply_path, source, threed_svc, work_dir, workers=os.cpu_count() or 1
         )
     console.print(
         f"  3D model {model.model_id} (revision {model.revision_id}) created; processing in CDF..."
@@ -149,6 +153,39 @@ def _build_and_wait(
     with console.status("  Waiting for CDF 3D processing..."):
         status = threed_svc.wait_until_processed(model)
     console.print(f"  [green]OK[/green]  3D model {model.model_id} {status}")
+
+
+def _build_missing_models(
+    meshes_svc: MeshFileServiceProtocol,
+    threed_svc: ThreeDServiceProtocol,
+    campaign_id: str,
+    file_ids: Sequence[int],
+    work_dir: Path,
+) -> None:
+    """Build the models of the campaign's mesh files that don't have one yet."""
+    meshes = meshes_svc.get_mesh_files(file_ids)
+    known = {m.file_id for m in meshes}
+    for file_id in file_ids:
+        if file_id not in known:
+            console.print(
+                f"  [yellow]Note:[/yellow] file {file_id} is not a CogniteFile, so it can't get "
+                "a 3D model of its own."
+            )
+    existing = threed_svc.find_models_for_files([m.external_id for m in meshes])
+    legacy = threed_svc.find_campaign_models([campaign_id]).get(campaign_id)
+    for mesh in meshes:
+        if mesh.external_id in existing:
+            console.print(f"  {mesh.external_id} already has a 3D model.")
+            continue
+        if covered_by_legacy(mesh, legacy):
+            console.print(
+                f"  {mesh.external_id} is shown by the campaign's legacy 3D model; skipped."
+            )
+            continue
+        mesh_dir = work_dir / str(mesh.file_id)
+        with console.status(f"  Downloading {mesh.name}..."):
+            ply = meshes_svc.download(mesh, mesh_dir / "source")
+        _build_and_wait(threed_svc, ply, mesh, mesh_dir / "build")
 
 
 @plan_app.command("list")
@@ -470,13 +507,13 @@ def _load_collision_proxy(
         tempfile.TemporaryDirectory() as tmp,
         console.status("Downloading the map's 3D model (collision proxy)..."),
     ):
-        path = campaigns_svc.download_collision_proxy(campaign_id, Path(tmp))
-        mesh = read_ply(path) if path is not None else None
+        paths = campaigns_svc.download_collision_proxies(campaign_id, Path(tmp))
+        mesh = merge_meshes([read_ply(p) for p in paths]) if paths else None
     if mesh is None:
         console.print(
             f"[yellow]Note:[/yellow] campaign {campaign_id} has no 3D model yet "
-            "(`dss campaign build-3d-model` builds it), so missing normals point towards "
-            "the findings' centre."
+            "(`dss worker` or `dss campaign build-3d-model` builds it), so missing normals "
+            "point towards the findings' centre."
         )
     return mesh
 
@@ -528,7 +565,7 @@ def _fmt_vec(v: tuple[float, float, float]) -> str:
 def campaign_upload(
     folder: Path = typer.Argument(..., help="Mission output folder to upload"),
     no_3d_model: bool = typer.Option(
-        False, "--no-3d-model", help="Skip building the CDF 3D model the viewer streams"
+        False, "--no-3d-model", help="Leave building the 3D model to `dss worker`"
     ),
 ) -> None:
     """Upload mission artifacts from a folder to CDF."""
@@ -593,7 +630,7 @@ def campaign_upload(
 
     # --- Assign roles and upload ---
     uploaded_new_file = False
-    uploaded_plys: list[Path] = []
+    uploaded_ply_ids: list[int] = []
 
     for ply in scanned.ply_files:
         console.print(f"\n  {ply.relative_to(folder)}")
@@ -601,7 +638,7 @@ def campaign_upload(
             with console.status("  Uploading..."):
                 fid = artifacts_svc.upload_ply(ply, area.external_id)
             ply_file_ids.append(fid)
-            uploaded_plys.append(ply)
+            uploaded_ply_ids.append(fid)
             uploaded_new_file = True
             console.print(f"  [green]OK[/green]  (file id {fid})")
 
@@ -623,9 +660,11 @@ def campaign_upload(
         )
         console.print("Campaign updated with file IDs.")
 
-    if uploaded_plys and not no_3d_model:
+    if uploaded_ply_ids and not no_3d_model:
         with tempfile.TemporaryDirectory() as work_dir:
-            _build_and_wait(threed_svc, campaign_id, uploaded_plys, Path(work_dir))
+            _build_missing_models(
+                artifacts_svc, threed_svc, campaign_id, uploaded_ply_ids, Path(work_dir)
+            )
 
     for csv_file in scanned.csv_files:
         console.print(f"\n  {csv_file.relative_to(folder)}")
@@ -670,8 +709,12 @@ def campaign_build_3d_model(
         None, "--campaign", "-c", help="Campaign external id (skips the pickers)"
     ),
 ) -> None:
-    """Build the CDF 3D model for an existing campaign from its PLY mesh(es)."""
-    vessels_svc, areas_svc, _plans, campaigns_svc, *_rest, threed_svc = _get_client()
+    """Build the CDF 3D models of a campaign's mesh files that don't have one yet.
+
+    Each mesh file gets its own model, so it keeps it when it moves to another campaign.
+    `dss worker` does the same automatically for every uploaded mesh.
+    """
+    vessels_svc, areas_svc, _plans, campaigns_svc, artifacts_svc, *_rest, threed_svc = _get_client()
 
     if campaign is None:
         vessel = pick_vessel(vessels_svc.list())
@@ -688,13 +731,7 @@ def campaign_build_3d_model(
         raise ValueError(f"Campaign {campaign!r} has no PLY mesh to convert.")
 
     with tempfile.TemporaryDirectory() as tmp:
-        work_dir = Path(tmp)
-        with console.status("  Downloading the campaign's mesh..."):
-            files = campaigns_svc.download_map(SPACE, campaign, work_dir / "source")
-        plys = [f for f in files if f.suffix.lower() == ".ply"]
-        if not plys:
-            raise ValueError(f"Campaign {campaign!r} has no PLY mesh to convert.")
-        _build_and_wait(threed_svc, campaign, plys, work_dir / "build")
+        _build_missing_models(artifacts_svc, threed_svc, campaign, result.cdf_file_ids, Path(tmp))
 
 
 @campaign_app.command("upload-drone-images")

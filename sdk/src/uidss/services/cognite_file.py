@@ -86,3 +86,21 @@ def upload_cognite_files(client: CogniteClient, specs: Sequence[CogniteFileSpec]
         file_ids.append(int(file_id))
         log.debug("uploaded cognite file", external_id=spec.external_id, file_id=file_id)
     return file_ids
+
+
+def file_external_ids(client: CogniteClient, file_ids: Sequence[int]) -> dict[int, str]:
+    """Numeric file id -> CogniteFile external id, for the files that are CogniteFiles.
+
+    Classic files (no instance id) and unknown ids are left out. Order follows *file_ids*.
+    """
+    found: dict[int, str] = {}
+    unique = list(dict.fromkeys(file_ids))
+    for i in range(0, len(unique), _CHUNK):
+        metadata = client.files.retrieve_multiple(
+            ids=unique[i : i + _CHUNK], ignore_unknown_ids=True
+        )
+        for item in metadata:
+            instance_id = getattr(item, "instance_id", None)
+            if item.id is not None and instance_id is not None:
+                found[int(item.id)] = instance_id.external_id
+    return {i: found[i] for i in unique if i in found}

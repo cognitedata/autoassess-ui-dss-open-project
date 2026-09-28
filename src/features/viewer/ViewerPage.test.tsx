@@ -28,9 +28,11 @@ vi.mock('./usePlyUrls', () => ({
 // vi.mock: useCampaignCadModels runs a React Query hook against CDF; the page tests only
 // need a finished CAD model for the mocked campaign so the viewer renders.
 vi.mock('./reveal/useCampaignCadModels', () => ({
-  useCampaignCadModels: vi.fn((campaignIds: string[]) => ({
-    data: campaignIds.includes('test-campaign') ? [makeDoneCadModel('test-campaign')] : undefined,
-    isSuccess: campaignIds.length > 0,
+  useCampaignCadModels: vi.fn((campaigns: { externalId: string }[]) => ({
+    data: campaigns.some((c) => c.externalId === 'test-campaign')
+      ? { models: [makeDoneCadModel('test-campaign')], meshesWithoutModel: [] }
+      : undefined,
+    isSuccess: campaigns.length > 0,
     isLoading: false,
     error: null,
   })),
@@ -38,7 +40,9 @@ vi.mock('./reveal/useCampaignCadModels', () => ({
 
 function makeDoneCadModel(campaignExternalId: string, status = 'Done') {
   return {
+    key: `${campaignExternalId}/f1-cad-model`,
     campaignExternalId,
+    sourceFileId: 42,
     modelId: 1,
     revisionId: 2,
     status,
@@ -305,16 +309,28 @@ describe(ViewerPage.name, () => {
       onColorModeChange: vi.fn(),
     });
     renderViewerPage(mockDeps);
-    expect(screen.getByText('3D model not yet uploaded')).toBeDefined();
+    expect(screen.getByText('No scan data yet')).toBeDefined();
+    expect(screen.getByText(/autoassess_bridge/)).toBeDefined();
   });
 
-  it('tells the user to build the 3D model when a campaign has a mesh but no CAD model', async () => {
+  it('passes each mesh campaign with its file ids to the CAD model lookup', async () => {
     const { useCampaignCadModels } = await import('./reveal/useCampaignCadModels');
-    vi.mocked(useCampaignCadModels).mockReturnValueOnce(makeSuccessResult([]));
+
+    renderViewerPage(mockDeps);
+
+    expect(vi.mocked(useCampaignCadModels)).toHaveBeenCalledWith([{ externalId: 'test-campaign', cdfFileIds: [42] }]);
+  });
+
+  it('says dss worker is building the 3D model when a mesh has no CAD model yet', async () => {
+    const { useCampaignCadModels } = await import('./reveal/useCampaignCadModels');
+    vi.mocked(useCampaignCadModels).mockReturnValueOnce(
+      makeSuccessResult({ models: [], meshesWithoutModel: [{ campaignExternalId: 'test-campaign', fileId: 42 }] }),
+    );
 
     renderViewerPage(mockDeps);
 
     expect(screen.getByText('3D model not built yet')).toBeInTheDocument();
+    expect(screen.getByText(/being built by/)).toBeInTheDocument();
     expect(screen.getByText('dss campaign build-3d-model --campaign test-campaign')).toBeInTheDocument();
     expect(screen.queryByTestId('ply-viewer-container')).toBeNull();
   });
@@ -333,7 +349,7 @@ describe(ViewerPage.name, () => {
   it('says the 3D model is processing while CDF converts it', async () => {
     const { useCampaignCadModels } = await import('./reveal/useCampaignCadModels');
     vi.mocked(useCampaignCadModels).mockReturnValueOnce(
-      makeSuccessResult([makeDoneCadModel('test-campaign', 'Processing')]),
+      makeSuccessResult({ models: [makeDoneCadModel('test-campaign', 'Processing')], meshesWithoutModel: [] }),
     );
 
     renderViewerPage(mockDeps);

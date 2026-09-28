@@ -64,29 +64,31 @@ export function ViewerPage() {
     droneImageCampaignIds,
   );
 
-  // Campaigns with an uploaded mesh. The viewer renders each as a CDF CAD model (streamed by
-  // Reveal), built from the mesh by `dss campaign upload` / `dss campaign build-3d-model`.
-  const meshCampaignIds = useMemo(
-    () => [...new Set(layerPanelViewModel.allPlyEntries.map((e) => e.campaignId))],
-    [layerPanelViewModel.allPlyEntries],
-  );
-  const cadModelsResult = useCampaignCadModels(meshCampaignIds);
+  // Campaigns with uploaded meshes. Each mesh file has its own CDF CAD model (streamed by
+  // Reveal), built by `dss worker`; a campaign shows the models of the files it lists now.
+  const meshCampaigns = useMemo(() => {
+    const byCampaign = new Map<string, number[]>();
+    for (const entry of layerPanelViewModel.allPlyEntries) {
+      byCampaign.set(entry.campaignId, [...(byCampaign.get(entry.campaignId) ?? []), Number(entry.key)]);
+    }
+    return [...byCampaign].map(([externalId, cdfFileIds]) => ({ externalId, cdfFileIds }));
+  }, [layerPanelViewModel.allPlyEntries]);
+  const cadModelsResult = useCampaignCadModels(meshCampaigns);
   const cadModels = useMemo(
-    () => (cadModelsResult.data ?? []).filter((m) => m.status === 'Done'),
+    () => (cadModelsResult.data?.models ?? []).filter((m) => m.status === 'Done'),
     [cadModelsResult.data],
   );
-  const campaignsWithoutModel = useMemo(
-    () => (cadModelsResult.isSuccess
-      ? meshCampaignIds.filter((id) => !cadModels.some((m) => m.campaignExternalId === id))
-      : []),
-    [cadModelsResult.isSuccess, meshCampaignIds, cadModels],
+  const waitingCampaignIds = useMemo(
+    () => [...new Set((cadModelsResult.data?.meshesWithoutModel ?? []).map((m) => m.campaignExternalId))],
+    [cadModelsResult.data],
   );
   const processingCampaignIds = useMemo(
-    () => new Set((cadModelsResult.data ?? [])
+    () => [...new Set((cadModelsResult.data?.models ?? [])
       .filter((m) => m.status !== 'Done' && m.status !== 'Failed')
-      .map((m) => m.campaignExternalId)),
+      .map((m) => m.campaignExternalId))],
     [cadModelsResult.data],
   );
+  const campaignsWithoutModel = waitingCampaignIds.length + processingCampaignIds.length > 0;
 
   // Each CAD model's collision proxy (small decimated PLY) — ray-cast for picking and normals.
   const proxyFileIds = useMemo(() => cadModels.map((m) => m.collisionProxyFileId), [cadModels]);
@@ -95,7 +97,7 @@ export function ViewerPage() {
   // changes — prevents PlyViewer's useEffect from re-firing and resetting the camera.
   const plyEntries = useMemo(
     () => cadModels.map((m, i) => ({
-      key: String(m.collisionProxyFileId),
+      key: m.key,
       campaignId: m.campaignExternalId,
       url: proxyUrlsResult.data?.[i] ?? '',
     })),
@@ -437,9 +439,9 @@ export function ViewerPage() {
             </div>
           )}
 
-          {!isLoading && !error && area != null && hasModel && campaignsWithoutModel.length > 0 && (
+          {!isLoading && !error && area != null && hasModel && campaignsWithoutModel && (
             <MissingCadModelNotice
-              campaignIds={campaignsWithoutModel}
+              waitingCampaignIds={waitingCampaignIds}
               processingCampaignIds={processingCampaignIds}
               className="absolute left-4 top-4 max-w-md"
             />
@@ -447,17 +449,17 @@ export function ViewerPage() {
 
           {!isLoading && !error && area != null && !hasModel && !cadModelsResult.isError && (
             <div className="flex h-full flex-col items-center justify-center text-center">
-              {campaignsWithoutModel.length > 0 ? (
+              {campaignsWithoutModel ? (
                 <MissingCadModelNotice
-                  campaignIds={campaignsWithoutModel}
+                  waitingCampaignIds={waitingCampaignIds}
                   processingCampaignIds={processingCampaignIds}
                 />
               ) : (
                 <>
-                  <p className="text-base font-medium text-foreground">3D model not yet uploaded</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    Run <code className="font-mono">dss campaign upload &lt;folder&gt;</code> to upload
-                    inspection data.
+                  <p className="text-base font-medium text-foreground">No scan data yet</p>
+                  <p className="mt-1 max-w-md text-sm text-muted-foreground">
+                    Robots with <code className="font-mono">autoassess_bridge</code> upload after each
+                    mission; or run <code className="font-mono">dss campaign upload &lt;folder&gt;</code>.
                   </p>
                 </>
               )}

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
@@ -20,14 +21,13 @@ from uidss.cdf.data_model import (
     view_id,
 )
 from uidss.models import InspectionResult, ResultStatus
-from uidss.services.threed_service import model_node_id
+from uidss.services.cognite_file import file_external_ids
+from uidss.services.threed_service import CadModel, CdfThreeDService
 
 log = structlog.get_logger()
 
 _List = list  # avoid shadowing by method named `list`
 _VALID_STATUSES: frozenset[str] = frozenset({"InProgress", "Complete"})
-_CAD_MODEL_VIEW = ViewId("cdf_cdm", "CogniteCADModel", "v1")
-_PROXY_TAG_PREFIX = "collisionProxyFileId:"
 
 
 class CampaignServiceProtocol(Protocol):
@@ -44,14 +44,28 @@ class CampaignServiceProtocol(Protocol):
     ) -> None: ...
     def complete(self, space: str, external_id: str) -> None: ...
     def download_map(self, space: str, external_id: str, output_dir: Path) -> _List[Path]: ...
-    def download_collision_proxy(
+    def download_collision_proxies(
         self, campaign_external_id: str, output_dir: Path
-    ) -> Path | None: ...
+    ) -> _List[Path]: ...
+
+
+class CadModelFinder(Protocol):
+    """The part of the 3D service that finds existing models (read-only)."""
+
+    def find_models_for_files(self, file_external_ids: Sequence[str]) -> dict[str, CadModel]: ...
+    def find_campaign_models(self, campaign_external_ids: Sequence[str]) -> dict[str, CadModel]: ...
 
 
 @dataclass
 class CdfCampaignService:
     _client: CogniteClient
+    _models: CadModelFinder | None = None
+
+    @property
+    def models(self) -> CadModelFinder:
+        if self._models is None:
+            self._models = CdfThreeDService(self._client)
+        return self._models
 
     def list(self, area_space: str, area_external_id: str) -> _List[InspectionResult]:
         response = self._client.data_modeling.instances.list(
@@ -98,29 +112,39 @@ class CdfCampaignService:
         log.info("downloaded campaign map", campaign=external_id, file_count=len(written))
         return written
 
-    def download_collision_proxy(self, campaign_external_id: str, output_dir: Path) -> Path | None:
-        """Download the campaign's decimated collision-proxy PLY (built by build-3d-model).
+    def download_collision_proxies(
+        self, campaign_external_id: str, output_dir: Path
+    ) -> _List[Path]:
+        """Download the decimated collision proxies of the campaign's 3D models. Read-only.
 
-        The file id is read from the ``collisionProxyFileId:<id>`` tag of the campaign's
-        ``{campaign}-cad-model`` CogniteCADModel node. Returns ``None`` when the campaign has
-        no 3D model yet (no node, or no usable tag). Read-only.
+        One per mesh file that has its own model, plus the legacy ``{campaign}-cad-model``'s
+        proxy when some mesh has no model of its own. Empty when nothing is built yet.
         """
-        response = self._client.data_modeling.instances.retrieve(
-            nodes=[(SPACE, model_node_id(campaign_external_id))],
-            sources=[_CAD_MODEL_VIEW],
+        campaign = self.get(SPACE, campaign_external_id)
+        if campaign is None:
+            raise ValueError(f"Campaign '{campaign_external_id}' not found in CDF")
+        xids = file_external_ids(self._client, campaign.cdf_file_ids)
+        models = self.models
+        per_file = models.find_models_for_files(list(xids.values()))
+        uncovered = any(xids.get(i) not in per_file for i in campaign.cdf_file_ids)
+        legacy = (
+            models.find_campaign_models([campaign_external_id]).get(campaign_external_id)
+            if uncovered
+            else None
         )
-        if not response.nodes:
-            return None
-        props = getattr(response.nodes[0], "properties", {}) or {}
-        tags = (props.get(_CAD_MODEL_VIEW) or {}).get("tags") or []
-        file_id = _proxy_file_id([str(t) for t in tags])
-        if file_id is None:
-            return None
+        chosen = [per_file[x] for x in xids.values() if x in per_file]
+        if legacy is not None:
+            chosen.append(legacy)
+
         output_dir.mkdir(parents=True, exist_ok=True)
-        path = output_dir / f"{campaign_external_id}-collision-proxy.ply"
-        self._client.files.download_to_path(path, id=file_id)
-        log.info("downloaded collision proxy", campaign=campaign_external_id, file_id=file_id)
-        return path
+        paths: _List[Path] = []
+        for model in chosen:
+            file_id = model.collision_proxy_file_id
+            path = output_dir / f"{campaign_external_id}-collision-proxy-{file_id}.ply"
+            self._client.files.download_to_path(path, id=file_id)
+            paths.append(path)
+        log.info("downloaded collision proxies", campaign=campaign_external_id, count=len(paths))
+        return paths
 
     def create(self, area_external_id: str, campaign_date: str) -> str:
         external_id = f"result-{uuid.uuid4()}"
@@ -207,15 +231,6 @@ class CdfCampaignService:
             ]
         )
         log.info("completed campaign", external_id=external_id)
-
-
-def _proxy_file_id(tags: _List[str]) -> int | None:
-    for tag in tags:
-        if tag.startswith(_PROXY_TAG_PREFIX):
-            value = tag.removeprefix(_PROXY_TAG_PREFIX)
-            if value.isdigit():
-                return int(value)
-    return None
 
 
 def _map_node(item: object) -> InspectionResult:

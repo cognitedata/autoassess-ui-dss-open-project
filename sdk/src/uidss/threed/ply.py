@@ -6,7 +6,7 @@ Reads what the autoassess missions produce: vertex positions, optional per-verte
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -157,3 +157,18 @@ def _rgb(columns: Mapping[str, npt.NDArray[np.generic]]) -> npt.NDArray[np.uint8
     if not all(c in columns for c in _RGB):
         return None
     return np.stack([columns[c] for c in _RGB], axis=1).astype(np.uint8)
+
+
+def merge_meshes(meshes: Sequence[PlyMesh]) -> PlyMesh:
+    """Concatenate meshes; colour attributes survive only if every mesh has them."""
+    if len(meshes) == 1:
+        return meshes[0]
+    offsets = np.cumsum([0] + [len(m.positions) for m in meshes[:-1]])
+    vertex_rgb = [m.vertex_rgb for m in meshes if m.vertex_rgb is not None]
+    face_rgb = [m.face_rgb for m in meshes if m.face_rgb is not None]
+    return PlyMesh(
+        positions=np.concatenate([m.positions for m in meshes]),
+        faces=np.concatenate([m.faces + o for m, o in zip(meshes, offsets, strict=True)]),
+        vertex_rgb=np.concatenate(vertex_rgb) if len(vertex_rgb) == len(meshes) else None,
+        face_rgb=np.concatenate(face_rgb) if len(face_rgb) == len(meshes) else None,
+    )

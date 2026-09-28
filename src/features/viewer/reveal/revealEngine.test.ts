@@ -147,7 +147,9 @@ describe(createRevealEngine.name, () => {
 
 function cadModel(overrides: Partial<CampaignCadModel>): CampaignCadModel {
   return {
+    key: 'result-1/f1-cad-model',
     campaignExternalId: 'result-1',
+    sourceFileId: 11,
     modelId: 5,
     revisionId: 6,
     status: 'Done',

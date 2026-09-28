@@ -20,10 +20,11 @@ from uidss.models import (
     InspectionPlan,
     InspectionResult,
     InspectionTask,
+    MeshFile,
     NewRegionTask,
     Vessel,
 )
-from uidss.services.threed_service import CampaignCadModel
+from uidss.services.threed_service import CadModel
 
 runner = CliRunner()
 
@@ -215,30 +216,52 @@ class TestFriendlyErrorHandling:
 
 
 class TestCampaignBuild3dModel:
-    def test_builds_model_from_the_campaigns_ply_and_waits(self, tmp_path: Path) -> None:
+    def test_builds_a_model_for_each_mesh_file_without_one_and_waits(self) -> None:
         campaign_svc = MagicMock()
-        campaign_svc.get.return_value = _campaign(cdf_file_ids=(11,))
-        campaign_svc.download_map.side_effect = lambda _s, _e, out: [_write_tiny_ply(out)]
-        threed_svc = MagicMock()
-        threed_svc.create_cad_model.return_value = CampaignCadModel("result-1", 5, 6, "Queued", 7)
-        threed_svc.wait_until_processed.return_value = "Done"
+        campaign_svc.get.return_value = _campaign(cdf_file_ids=(11, 12))
+        artifacts = _StubMeshFiles([_mesh(11, "f1"), _mesh(12, "f2")])
+        threed_svc = _stub_threed(per_file={"f2": _cad("f2")})
 
-        with patch("uidss.cli.main._get_client", return_value=_client(campaign_svc, threed_svc)):
-            result = runner.invoke(app, ["campaign", "build-3d-model", "--campaign", "result-1"])
+        result = _build_3d(campaign_svc, artifacts, threed_svc)
 
         assert result.exit_code == 0, result.output
-        kwargs = threed_svc.create_cad_model.call_args.kwargs
-        assert kwargs["campaign_external_id"] == "result-1"
-        assert kwargs["zip_path"].suffix == ".zip"
+        [call] = threed_svc.create_cad_model_for_file.call_args_list
+        assert call.kwargs["source"] == _mesh(11, "f1")
+        assert call.kwargs["zip_path"].suffix == ".zip"
+        assert artifacts.downloaded == [11]
         threed_svc.wait_until_processed.assert_called_once()
-        assert "model 5" in result.output and "Done" in result.output
+        out = _plain(result.output)
+        assert "f2" in out and "already has a 3D model" in out
+        assert "model 5" in out and "Done" in out
+
+    def test_skips_meshes_the_campaigns_legacy_model_already_shows(self) -> None:
+        campaign_svc = MagicMock()
+        campaign_svc.get.return_value = _campaign(cdf_file_ids=(11,))
+        artifacts = _StubMeshFiles([_mesh(11, "f1", created=100)])
+        threed_svc = _stub_threed(legacy={"result-1": _cad("result-1", created=200)})
+
+        result = _build_3d(campaign_svc, artifacts, threed_svc)
+
+        assert result.exit_code == 0, result.output
+        threed_svc.create_cad_model_for_file.assert_not_called()
+        assert "legacy" in _plain(result.output)
+
+    def test_notes_classic_files_that_cannot_get_their_own_model(self) -> None:
+        campaign_svc = MagicMock()
+        campaign_svc.get.return_value = _campaign(cdf_file_ids=(11,))
+        threed_svc = _stub_threed()
+
+        result = _build_3d(campaign_svc, _StubMeshFiles([]), threed_svc)
+
+        assert result.exit_code == 0, result.output
+        threed_svc.create_cad_model_for_file.assert_not_called()
+        assert "not a CogniteFile" in _plain(result.output)
 
     def test_errors_when_campaign_has_no_ply_mesh(self) -> None:
         campaign_svc = MagicMock()
         campaign_svc.get.return_value = _campaign(cdf_file_ids=())
 
-        with patch("uidss.cli.main._get_client", return_value=_client(campaign_svc, MagicMock())):
-            result = runner.invoke(app, ["campaign", "build-3d-model", "--campaign", "result-1"])
+        result = _build_3d(campaign_svc, _StubMeshFiles([]), _stub_threed())
 
         assert result.exit_code == 1
         assert "no PLY mesh" in result.output
@@ -247,8 +270,7 @@ class TestCampaignBuild3dModel:
         campaign_svc = MagicMock()
         campaign_svc.get.return_value = None
 
-        with patch("uidss.cli.main._get_client", return_value=_client(campaign_svc, MagicMock())):
-            result = runner.invoke(app, ["campaign", "build-3d-model", "--campaign", "nope"])
+        result = _build_3d(campaign_svc, _StubMeshFiles([]), _stub_threed(), campaign="nope")
 
         assert result.exit_code == 1
         assert "not found" in result.output
@@ -446,9 +468,9 @@ class _StubCampaignService:
     def list(self, area_space: str, area_external_id: str) -> list[InspectionResult]:
         return self._campaigns
 
-    def download_collision_proxy(self, campaign_external_id: str, out_dir: Path) -> Path | None:
+    def download_collision_proxies(self, campaign_external_id: str, out_dir: Path) -> list[Path]:
         self.proxy_requests.append(campaign_external_id)
-        return _write_cube_ply(out_dir, size=10.0) if self._proxy else None
+        return [_write_cube_ply(out_dir, size=10.0)] if self._proxy else []
 
 
 class _StubPlanService:
@@ -575,9 +597,57 @@ def _campaign(cdf_file_ids: tuple[int, ...]) -> InspectionResult:
     )
 
 
-def _client(campaign_svc: MagicMock, threed_svc: MagicMock) -> tuple[MagicMock, ...]:
-    others = [MagicMock() for _ in range(4)]
-    return (MagicMock(), MagicMock(), MagicMock(), campaign_svc, *others, threed_svc)
+class _StubMeshFiles:
+    """MeshFileService stub: the given CogniteFile meshes; downloads write a tiny PLY."""
+
+    def __init__(self, meshes: list[MeshFile]) -> None:
+        self._meshes = meshes
+        self.downloaded: list[int] = []
+
+    def list_mesh_files(self, area_external_id: str | None = None) -> list[MeshFile]:
+        return list(self._meshes)
+
+    def get_mesh_files(self, file_ids: Sequence[int]) -> list[MeshFile]:
+        return [m for m in self._meshes if m.file_id in file_ids]
+
+    def download(self, mesh: MeshFile, output_dir: Path) -> Path:
+        self.downloaded.append(mesh.file_id)
+        return _write_tiny_ply(output_dir)
+
+
+def _mesh(file_id: int, external_id: str, created: int = 1) -> MeshFile:
+    return MeshFile(file_id, external_id, f"{external_id}.ply", "a-1", created)
+
+
+def _cad(node: str, created: int = 0) -> CadModel:
+    return CadModel(f"{node}-cad-model", f"{node}-cad-revision", 5, 6, "Queued", 7, None, created)
+
+
+def _stub_threed(
+    per_file: dict[str, CadModel] | None = None, legacy: dict[str, CadModel] | None = None
+) -> MagicMock:
+    threed_svc = MagicMock()
+    threed_svc.find_models_for_files.side_effect = lambda xids: {
+        x: m for x, m in (per_file or {}).items() if x in xids
+    }
+    threed_svc.find_campaign_models.side_effect = lambda ids: {
+        c: m for c, m in (legacy or {}).items() if c in ids
+    }
+    threed_svc.create_cad_model_for_file.side_effect = lambda **kw: _cad(kw["source"].external_id)
+    threed_svc.wait_until_processed.return_value = "Done"
+    return threed_svc
+
+
+def _build_3d(
+    campaign_svc: MagicMock,
+    artifacts: _StubMeshFiles,
+    threed_svc: MagicMock,
+    campaign: str = "result-1",
+) -> Result:
+    services = (MagicMock(), MagicMock(), MagicMock(), campaign_svc, artifacts)
+    services = (*services, *(MagicMock() for _ in range(3)), threed_svc)
+    with patch("uidss.cli.main._get_client", return_value=services):
+        return runner.invoke(app, ["campaign", "build-3d-model", "--campaign", campaign])
 
 
 def _write_tiny_ply(out_dir: Path) -> Path:

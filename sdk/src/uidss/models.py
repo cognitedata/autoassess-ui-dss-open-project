@@ -96,6 +96,21 @@ class InspectionResult:
 
 
 @dataclass(frozen=True)
+class MeshFile:
+    """An uploaded mesh: a CogniteFile tagged ``ply_mesh``.
+
+    Each one gets its own CDF 3D model, keyed by ``external_id`` (see ``threed_service``);
+    campaigns reference it by the numeric ``file_id`` in ``cdfFileIds``.
+    """
+
+    file_id: int
+    external_id: str
+    name: str
+    area_external_id: str | None = None
+    created_time: int = 0  # Unix epoch milliseconds (of the CogniteFile node)
+
+
+@dataclass(frozen=True)
 class NdtMeasurement:
     space: str
     external_id: str

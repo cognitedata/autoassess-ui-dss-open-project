@@ -13,6 +13,7 @@ from cognite.client.data_classes.data_modeling.cdm.v1 import CogniteFileApply
 from uidss.cdf.data_model import SPACE
 from uidss.services.cognite_file import (
     CogniteFileSpec,
+    file_external_ids,
     make_file_external_id,
     upload_cognite_file,
     upload_cognite_files,
@@ -121,6 +122,34 @@ class TestMakeFileExternalId:
     def test_fits_cdf_external_id_limit(self) -> None:
         xid = make_file_external_id("a" * 200, Path("b" * 300 + ".ply"))
         assert len(xid) <= 255
+
+
+class TestFileExternalIds:
+    def test_maps_numeric_ids_to_cognite_file_external_ids_in_order(self) -> None:
+        client: Any = MagicMock()
+        client.files.retrieve_multiple.return_value = [
+            MagicMock(id=2, instance_id=NodeId(SPACE, "f2")),
+            MagicMock(id=1, instance_id=NodeId(SPACE, "f1")),
+        ]
+
+        assert list(file_external_ids(client, [1, 2]).items()) == [(1, "f1"), (2, "f2")]
+        kwargs = client.files.retrieve_multiple.call_args.kwargs
+        assert kwargs == {"ids": [1, 2], "ignore_unknown_ids": True}
+
+    def test_leaves_out_classic_files_without_an_instance_id(self) -> None:
+        client: Any = MagicMock()
+        client.files.retrieve_multiple.return_value = [MagicMock(id=1, instance_id=None)]
+
+        assert file_external_ids(client, [1]) == {}
+
+    def test_retrieves_in_chunks_of_1000_without_duplicates(self) -> None:
+        client: Any = MagicMock()
+        client.files.retrieve_multiple.return_value = []
+
+        file_external_ids(client, [*range(1500), 0, 1])
+
+        sizes = [len(c.kwargs["ids"]) for c in client.files.retrieve_multiple.call_args_list]
+        assert sizes == [1000, 500]
 
 
 # ---------------------------------------------------------------------------

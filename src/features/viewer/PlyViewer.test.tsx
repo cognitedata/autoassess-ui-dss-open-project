@@ -646,6 +646,17 @@ describe(PlyViewer.name, () => {
       await waitFor(() => expect(engine.addCadModel).toHaveBeenCalledWith(cad));
     });
 
+    it('adds every model of a campaign with several mesh files', async () => {
+      const first = makeCadModel('test-campaign', 'f1');
+      const second = makeCadModel('test-campaign', 'f2');
+
+      renderViewer(<PlyViewer plyEntries={[]} cadModels={[first, second]} elements={[]} />);
+
+      await waitFor(() => expect(engine.addCadModel).toHaveBeenCalledTimes(2));
+      expect(engine.addCadModel).toHaveBeenCalledWith(first);
+      expect(engine.addCadModel).toHaveBeenCalledWith(second);
+    });
+
     it('adds a hidden campaign\'s CAD model only once its MESH toggle turns on', async () => {
       const cad = makeCadModel('hidden-campaign');
       renderViewer(<PlyViewer plyEntries={[]} cadModels={[cad]} elements={[]} />);
@@ -1233,9 +1244,11 @@ function captureAddedProxyMesh(): { getProxy: () => Mesh | undefined; restore: (
   return { getProxy: () => captured[0], restore: () => spy.mockRestore() };
 }
 
-function makeCadModel(campaignExternalId: string): CampaignCadModel {
+function makeCadModel(campaignExternalId: string, file = 'f1'): CampaignCadModel {
   return {
+    key: `${campaignExternalId}/${file}-cad-model`,
     campaignExternalId,
+    sourceFileId: 11,
     modelId: 1,
     revisionId: 2,
     status: 'Done',

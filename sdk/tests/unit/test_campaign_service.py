@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from cognite.client.data_classes.data_modeling import NodeId
 from cognite.client.data_classes.data_modeling.instances import Properties
 
 from uidss.cdf.data_model import INSPECTION_RESULT_VIEW, SPACE, view_key
 from uidss.models import InspectionResult
 from uidss.services.campaign_service import CdfCampaignService
+from uidss.services.threed_service import CadModel
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -302,51 +305,137 @@ class TestDownloadMap:
 
 
 # ---------------------------------------------------------------------------
-# download_collision_proxy()
+# download_collision_proxies()
 # ---------------------------------------------------------------------------
 
 
-def _make_cad_model_node(tags: list[str]) -> MagicMock:
-    node = MagicMock()
-    node.instance_type = "node"
-    node.space = SPACE
-    node.external_id = "result-001-cad-model"
-    node.properties = Properties.load({"cdf_cdm": {"CogniteCADModel/v1": {"tags": tags}}})
-    return node
+class _StubModels:
+    """CadModelFinder stub: per-file models by file external id, legacy ones by campaign."""
+
+    def __init__(
+        self, per_file: dict[str, CadModel] | None = None, legacy: dict[str, CadModel] | None = None
+    ) -> None:
+        self._per_file = per_file or {}
+        self._legacy = legacy or {}
+        self.file_requests: list[list[str]] = []
+
+    def find_models_for_files(self, file_external_ids: Sequence[str]) -> dict[str, CadModel]:
+        self.file_requests.append(list(file_external_ids))
+        return {x: m for x, m in self._per_file.items() if x in file_external_ids}
+
+    def find_campaign_models(self, campaign_external_ids: Sequence[str]) -> dict[str, CadModel]:
+        return {c: m for c, m in self._legacy.items() if c in campaign_external_ids}
 
 
-class TestDownloadCollisionProxy:
-    def test_downloads_the_file_named_by_the_cad_model_tag(self, tmp_path: Path) -> None:
-        node = _make_cad_model_node(["autoassess", "threeDModelId:5", "collisionProxyFileId:77"])
-        client = _make_retrieve_client(node)
+def _cad(node: str, proxy: int, source: int | None = None) -> CadModel:
+    return CadModel(f"{node}-cad-model", f"{node}-cad-revision", 1, 2, "Done", proxy, source)
 
-        path = CdfCampaignService(client).download_collision_proxy("result-001", tmp_path)
 
-        assert path == tmp_path / "result-001-collision-proxy.ply"
-        client.files.download_to_path.assert_called_once_with(path, id=77)
-        [(space, external_id)] = client.data_modeling.instances.retrieve.call_args.kwargs["nodes"]
-        assert (space, external_id) == (SPACE, "result-001-cad-model")
+def _proxy_client(file_ids: list[int], xids: dict[int, str]) -> MagicMock:
+    node = _make_node(
+        "result-001",
+        {
+            "area": {"space": SPACE, "externalId": "area-001"},
+            "campaignDate": "2026-05-07",
+            "status": "Complete",
+            "cdfFileIds": file_ids,
+        },
+    )
+    client = _make_retrieve_client(node)
+    client.files.retrieve_multiple.return_value = [
+        MagicMock(id=i, instance_id=NodeId(SPACE, x)) for i, x in xids.items()
+    ]
+    return client
 
-    def test_returns_none_when_the_tag_is_missing(self, tmp_path: Path) -> None:
-        client = _make_retrieve_client(_make_cad_model_node(["autoassess", "threeDModelId:5"]))
 
-        assert CdfCampaignService(client).download_collision_proxy("result-001", tmp_path) is None
+class TestDownloadCollisionProxies:
+    def test_downloads_the_proxy_of_each_mesh_files_own_model(self, tmp_path: Path) -> None:
+        client = _proxy_client([1, 2], {1: "f1", 2: "f2"})
+        models = _StubModels(per_file={"f1": _cad("f1", 71, 1), "f2": _cad("f2", 72, 2)})
+
+        paths = CdfCampaignService(client, models).download_collision_proxies(
+            "result-001", tmp_path
+        )
+
+        assert paths == [
+            tmp_path / "result-001-collision-proxy-71.ply",
+            tmp_path / "result-001-collision-proxy-72.ply",
+        ]
+        client.files.download_to_path.assert_any_call(paths[0], id=71)
+        client.files.download_to_path.assert_any_call(paths[1], id=72)
+        assert models.file_requests == [["f1", "f2"]]
+
+    def test_falls_back_to_the_legacy_campaign_model(self, tmp_path: Path) -> None:
+        client = _proxy_client([1], {1: "f1"})
+        models = _StubModels(legacy={"result-001": _cad("result-001", 77)})
+
+        paths = CdfCampaignService(client, models).download_collision_proxies(
+            "result-001", tmp_path
+        )
+
+        assert paths == [tmp_path / "result-001-collision-proxy-77.ply"]
+
+    def test_uses_the_legacy_model_for_classic_files_without_an_instance_id(
+        self, tmp_path: Path
+    ) -> None:
+        client = _proxy_client([1], {})
+        models = _StubModels(legacy={"result-001": _cad("result-001", 77)})
+
+        paths = CdfCampaignService(client, models).download_collision_proxies(
+            "result-001", tmp_path
+        )
+
+        assert [p.name for p in paths] == ["result-001-collision-proxy-77.ply"]
+
+    def test_mixes_per_file_and_legacy_models(self, tmp_path: Path) -> None:
+        client = _proxy_client([1, 2], {1: "f1", 2: "f2"})
+        models = _StubModels(
+            per_file={"f2": _cad("f2", 72, 2)}, legacy={"result-001": _cad("result-001", 77)}
+        )
+
+        paths = CdfCampaignService(client, models).download_collision_proxies(
+            "result-001", tmp_path
+        )
+
+        assert sorted(p.name for p in paths) == [
+            "result-001-collision-proxy-72.ply",
+            "result-001-collision-proxy-77.ply",
+        ]
+
+    def test_ignores_the_legacy_model_when_every_file_has_its_own(self, tmp_path: Path) -> None:
+        client = _proxy_client([1], {1: "f1"})
+        models = _StubModels(
+            per_file={"f1": _cad("f1", 71, 1)}, legacy={"result-001": _cad("result-001", 77)}
+        )
+
+        paths = CdfCampaignService(client, models).download_collision_proxies(
+            "result-001", tmp_path
+        )
+
+        assert [p.name for p in paths] == ["result-001-collision-proxy-71.ply"]
+
+    def test_returns_nothing_when_no_model_exists(self, tmp_path: Path) -> None:
+        client = _proxy_client([1], {1: "f1"})
+
+        paths = CdfCampaignService(client, _StubModels()).download_collision_proxies(
+            "result-001", tmp_path
+        )
+
+        assert paths == []
         client.files.download_to_path.assert_not_called()
 
-    def test_returns_none_when_the_tag_is_not_a_number(self, tmp_path: Path) -> None:
-        client = _make_retrieve_client(_make_cad_model_node(["collisionProxyFileId:abc"]))
-
-        assert CdfCampaignService(client).download_collision_proxy("result-001", tmp_path) is None
-
-    def test_returns_none_when_the_model_node_is_missing(self, tmp_path: Path) -> None:
+    def test_raises_when_the_campaign_is_missing(self, tmp_path: Path) -> None:
         client = _make_retrieve_client(None)
 
-        assert CdfCampaignService(client).download_collision_proxy("result-001", tmp_path) is None
-        client.files.download_to_path.assert_not_called()
+        with pytest.raises(ValueError, match="not found"):
+            CdfCampaignService(client, _StubModels()).download_collision_proxies(
+                "result-001", tmp_path
+            )
 
     def test_writes_nothing_to_cdf(self, tmp_path: Path) -> None:
-        client = _make_retrieve_client(_make_cad_model_node(["collisionProxyFileId:77"]))
+        client = _proxy_client([1], {1: "f1"})
+        models = _StubModels(per_file={"f1": _cad("f1", 71, 1)})
 
-        CdfCampaignService(client).download_collision_proxy("result-001", tmp_path)
+        CdfCampaignService(client, models).download_collision_proxies("result-001", tmp_path)
 
         client.data_modeling.instances.apply.assert_not_called()

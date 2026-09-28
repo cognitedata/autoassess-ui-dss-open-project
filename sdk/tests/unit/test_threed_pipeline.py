@@ -1,4 +1,4 @@
-"""Tests for building a campaign's CAD model from its PLY file(s)."""
+"""Tests for building a mesh file's CAD model, and for merging meshes."""
 
 from __future__ import annotations
 
@@ -7,50 +7,51 @@ from pathlib import Path
 
 import numpy as np
 
-from uidss.services.threed_service import CampaignCadModel
-from uidss.threed.pipeline import build_campaign_cad_model, merge_meshes
-from uidss.threed.ply import PlyMesh, read_ply
+from uidss.models import MeshFile
+from uidss.services.threed_service import CadModel
+from uidss.threed.pipeline import build_file_cad_model
+from uidss.threed.ply import PlyMesh, merge_meshes, read_ply
 
 
 class StubThreeDService:
+    """Records create calls; the lookup methods are never used by the pipeline."""
+
     def __init__(self) -> None:
         self.calls: list[dict[str, object]] = []
 
-    def create_cad_model(
+    def create_cad_model_for_file(
         self,
-        campaign_external_id: str,
+        source: MeshFile,
         zip_path: Path,
         proxy_path: Path,
         palette: dict[str, tuple[int, int, int]],
         has_texture: bool,
-    ) -> CampaignCadModel:
+    ) -> CadModel:
         self.calls.append(
             {
-                "campaign": campaign_external_id,
+                "source": source,
                 "zip_members": sorted(zipfile.ZipFile(zip_path).namelist()),
                 "proxy": read_ply(proxy_path),
                 "palette": palette,
                 "has_texture": has_texture,
             }
         )
-        return CampaignCadModel(campaign_external_id, 1, 2, "Queued", 3)
-
-    def wait_until_processed(
-        self, model: CampaignCadModel, timeout_s: float = 1800, poll_s: float = 15
-    ) -> str:
-        return "Done"
+        return CadModel(f"{source.external_id}-cad-model", "rev", 1, 2, "Queued", 3, source.file_id)
 
 
-class TestBuildCampaignCadModel:
-    def test_converts_and_creates_model_for_campaign(self, tmp_path: Path) -> None:
+_SOURCE = MeshFile(file_id=11, external_id="area-1-file-abc-mesh.ply", name="mesh.ply")
+
+
+class TestBuildFileCadModel:
+    def test_converts_and_creates_the_model_for_the_file(self, tmp_path: Path) -> None:
         ply = _write_ascii_ply(tmp_path / "mesh.ply", offset=0.0)
         stub = StubThreeDService()
 
-        result = build_campaign_cad_model([ply], "result-1", stub, tmp_path)
+        result = build_file_cad_model(ply, _SOURCE, stub, tmp_path / "work")
 
         assert result.model_id == 1
         call = stub.calls[0]
-        assert call["campaign"] == "result-1"
+        assert call["source"] == _SOURCE
         assert call["zip_members"] == ["model.mtl", "model.obj"]
         assert call["palette"] == {"seg_ff0000": (255, 0, 0)}
         assert call["has_texture"] is False
@@ -59,22 +60,11 @@ class TestBuildCampaignCadModel:
         ply = _write_ascii_ply(tmp_path / "mesh.ply", offset=0.0)
         stub = StubThreeDService()
 
-        build_campaign_cad_model([ply], "result-1", stub, tmp_path)
+        build_file_cad_model(ply, _SOURCE, stub, tmp_path / "work")
 
         proxy = stub.calls[0]["proxy"]
         assert isinstance(proxy, PlyMesh)
         assert len(proxy.faces) == 2
-
-    def test_merges_several_ply_files_into_one_model(self, tmp_path: Path) -> None:
-        a = _write_ascii_ply(tmp_path / "a.ply", offset=0.0)
-        b = _write_ascii_ply(tmp_path / "b.ply", offset=10.0)
-        stub = StubThreeDService()
-
-        build_campaign_cad_model([a, b], "result-1", stub, tmp_path)
-
-        proxy = stub.calls[0]["proxy"]
-        assert isinstance(proxy, PlyMesh)
-        assert len(proxy.faces) == 4
 
 
 class TestMergeMeshes:

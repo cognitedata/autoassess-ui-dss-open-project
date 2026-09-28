@@ -349,8 +349,8 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
   const defectLayerRef = useRef<DefectDetectionLayer | null>(null);
   const selectionLayerRef = useRef<SelectionLayer | null>(null);
   const loadedObjectsRef = useRef<Mesh[]>([]);
-  /** Per-campaign CAD model handles (the rendered meshes). */
-  const cadHandlesRef = useRef<Map<string, CadModelHandle>>(new Map());
+  /** CAD model handles (the rendered meshes) by CampaignCadModel.key, with their campaign. */
+  const cadHandlesRef = useRef<Map<string, { handle: CadModelHandle; campaignId: string }>>(new Map());
   /** Per-key map of loaded PCD Points objects — used by pcdVisibilityStore subscription. */
   const pcdObjectsRef = useRef<Map<string, Points>>(new Map());
   /** Per-campaign Three.js Groups (children of meshLayer) — used for per-campaign MESH visibility. */
@@ -584,7 +584,7 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       campaignMeshGroupsRef.current.forEach((group, campaignId) => {
         group.visible = state.visibility[campaignId]?.['MESH'] === true;
       });
-      cadHandlesRef.current.forEach((handle, campaignId) => {
+      cadHandlesRef.current.forEach(({ handle, campaignId }) => {
         handle.setVisible(state.isEffectivelyVisible('MESH') && state.visibility[campaignId]?.['MESH'] === true);
       });
       cadModels.forEach((cad) => {
@@ -606,7 +606,7 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
     // colour for "colorization", segment colours for "defects") without reloading them.
     const unsubscribeColorMode = useColorModeStore.subscribe((state) => {
       const mode = state.getColorMode('MESH');
-      cadHandlesRef.current.forEach((handle) => {
+      cadHandlesRef.current.forEach(({ handle }) => {
         handle.setColourMode(mode).catch((error: unknown) => {
           console.error('Failed to apply colour mode to CAD model', error);
         });
@@ -941,17 +941,17 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
       }
     });
 
-    // Add a campaign's CAD model the first time its MESH toggle is on (mirrors the lazy PLY /
-    // PCD loading: nothing is streamed for campaigns nobody has asked to see).
-    const startedCadCampaigns = new Set<string>();
+    // Add a campaign's CAD models (one per mesh file) the first time its MESH toggle is on
+    // (mirrors the lazy PLY / PCD loading: nothing is streamed for campaigns nobody has asked to see).
+    const startedCadModels = new Set<string>();
     triggerCadLoad = (cad: CampaignCadModel) => {
-      if (startedCadCampaigns.has(cad.campaignExternalId)) return;
-      startedCadCampaigns.add(cad.campaignExternalId);
+      if (startedCadModels.has(cad.key)) return;
+      startedCadModels.add(cad.key);
       engine
         .addCadModel(cad)
         .then(async (handle) => {
           if (signal.aborted) return;
-          cadHandlesRef.current.set(cad.campaignExternalId, handle);
+          cadHandlesRef.current.set(cad.key, { handle, campaignId: cad.campaignExternalId });
           const visible = useLayerVisibilityStore.getState();
           handle.setVisible(
             visible.isEffectivelyVisible('MESH') &&
@@ -962,7 +962,7 @@ export const PlyViewer = forwardRef<PlyViewerHandle, PlyViewerProps>(function Pl
         })
         .catch((error: unknown) => {
           if (signal.aborted) return;
-          console.error(`Failed to load CAD model for campaign ${cad.campaignExternalId}`, error);
+          console.error(`Failed to load CAD model ${cad.key}`, error);
         });
     };
 
