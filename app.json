@@ -1,0 +1,18 @@
+{
+  "name": "autoassess uidss",
+  "description": "Autoassess user interface and decision support system",
+  "externalId": "autoassess-uidss",
+  "versionTag": "0.0.2",
+  "infra": "appsApi",
+  "deployments": [
+    {
+      "org": "cog-autoassess",
+      "project": "autoassess-dev",
+      "baseUrl": "https://westeurope-1.cognitedata.com",
+      "published": false,
+      "deployClientId": "",
+      "deploySecretName": "cog-autoassess_autoassess-dev_westeurope-1"
+    }
+  ]
+}
+

@@ -1,0 +1,6 @@
+# TUM RGB-D benchmark rgb.txt
+# timestamp filename
+# Generated for unit tests
+1000.000 rgb/frame_0001.png
+1000.100 rgb/frame_0002.png
+1000.200 rgb/frame_0003.png
