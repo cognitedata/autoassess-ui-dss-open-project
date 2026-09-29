@@ -4,7 +4,7 @@ import { Box3, Group, PerspectiveCamera, Vector3 } from 'three';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { CampaignCadModel } from './CampaignCadModelService';
-import { createRevealEngine, FLAT_MESH_COLOUR, VIEWER_BACKGROUND } from './revealEngine';
+import { axisViewConfig, createRevealEngine, FLAT_MESH_COLOUR, VIEWER_BACKGROUND } from './revealEngine';
 import type { RevealModelLike, RevealViewerLike } from './revealEngine';
 
 describe(createRevealEngine.name, () => {
@@ -66,6 +66,17 @@ describe(createRevealEngine.name, () => {
 
     const { color } = vi.mocked(viewer.setBackgroundColor).mock.calls[0][0];
     expect(color?.getHex()).toBe(VIEWER_BACKGROUND);
+  });
+
+  it('should attach the axis view tool to the created viewer', () => {
+    const attachAxisView = vi.fn();
+
+    createRevealEngine(
+      { container: document.createElement('div'), camera: new PerspectiveCamera(), sdk: {} as CogniteClient },
+      { createViewer, listNodes, attachAxisView },
+    );
+
+    expect(attachAxisView).toHaveBeenCalledWith(viewer);
   });
 
   it('should add the scene root once and request a redraw every render', () => {
@@ -142,6 +153,59 @@ describe(createRevealEngine.name, () => {
     makeEngine().dispose();
 
     expect(viewer.dispose).toHaveBeenCalled();
+  });
+});
+
+describe(axisViewConfig.name, () => {
+  // The scene root is added in the plan frame (task position3d/normalVector use the same
+  // x/y/z), so the gizmo faces must be labelled by axis, not by Front/Back/Left/Right.
+  it('should label all six faces with their signed plan axis', () => {
+    const faces = axisViewConfig().faces;
+
+    expect(faces?.xPositiveFace?.label).toBe('+X');
+    expect(faces?.xNegativeFace?.label).toBe('-X');
+    expect(faces?.yPositiveFace?.label).toBe('+Y');
+    expect(faces?.yNegativeFace?.label).toBe('-Y');
+    expect(faces?.zPositiveFace?.label).toBe('+Z');
+    expect(faces?.zNegativeFace?.label).toBe('-Z');
+  });
+
+  it('should colour both faces of each axis alike, with distinct colours per axis', () => {
+    const faces = axisViewConfig().faces;
+
+    const x = faces?.xPositiveFace?.faceColor?.getHex();
+    const y = faces?.yPositiveFace?.faceColor?.getHex();
+    const z = faces?.zPositiveFace?.faceColor?.getHex();
+    expect(faces?.xNegativeFace?.faceColor?.getHex()).toBe(x);
+    expect(faces?.yNegativeFace?.faceColor?.getHex()).toBe(y);
+    expect(faces?.zNegativeFace?.faceColor?.getHex()).toBe(z);
+    expect(new Set([x, y, z]).size).toBe(3);
+  });
+
+  it('should use the conventional axis colours: x red, y green, z blue', () => {
+    const faces = axisViewConfig().faces;
+
+    const x = faces?.xPositiveFace?.faceColor;
+    const y = faces?.yPositiveFace?.faceColor;
+    const z = faces?.zPositiveFace?.faceColor;
+    expect(x && x.r > x.g && x.r > x.b).toBe(true);
+    expect(y && y.g > y.r && y.g > y.b).toBe(true);
+    expect(z && z.b > z.r && z.b > z.g).toBe(true);
+  });
+
+  it('should use a legible white font on every face', () => {
+    const faces = axisViewConfig().faces ?? {};
+
+    const fontColours = Object.values(faces).map((face) => face?.fontColor?.getHex());
+    expect(fontColours).toHaveLength(6);
+    expect(fontColours).toEqual([0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xffffff, 0xffffff]);
+  });
+
+  it('should keep the default corner placement and a legible size', () => {
+    const config = axisViewConfig();
+
+    expect(config.position).toBeUndefined();
+    expect(config.size).toBe(128);
   });
 });
 
