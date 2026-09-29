@@ -1,0 +1,11 @@
+{
+  "manifestVersion": 1,
+  "permissions": {
+    "network": [
+      {
+        "sources": ["'wasm-unsafe-eval'"],
+        "directives": ["script-src"]
+      }
+    ]
+  }
+}
