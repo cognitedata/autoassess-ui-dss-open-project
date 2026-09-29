@@ -38,6 +38,14 @@ tooling scripts under `scripts/` (see [Scripts](#scripts) below).
   [`sdk/README.md`](sdk/README.md) and [`sdk/AGENTS.md`](sdk/AGENTS.md); it has its own toolchain
   and conventions, independent of the rest of this file.
 
+## Related repositories
+
+- **`autoassess_bridge` ROS node** — the robot-side interface (plans out over ROS topics, mission
+  uploads and findings back to CDF). Lives on the
+  [`gbplanner_ros-autoassess` branch of omkarsawant99/gbplanner_ros](https://github.com/omkarsawant99/gbplanner_ros/tree/gbplanner_ros-autoassess).
+  The full interface list of the stack is in
+  [docs/tutorial/09-d62-data-in-the-ui.md](docs/tutorial/09-d62-data-in-the-ui.md).
+
 ## Scripts
 
 | Command | Purpose |
