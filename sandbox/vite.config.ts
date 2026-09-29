@@ -13,6 +13,8 @@ import react from '@vitejs/plugin-react';
 import type { Plugin } from 'vite';
 import { defineConfig } from 'vite';
 
+import { ancestorOriginsFirefoxPlugin } from '../src/shared/host/ancestorOriginsPatch';
+
 
 /**
  * Pyodide runtime files served from the app's own origin (never a CDN): the Flows CSP only
@@ -85,6 +87,7 @@ export default defineConfig({
   // production CSP (script-src 'self', no 'unsafe-inline') blocks anyway.
   plugins: [
     { ...manifestCspPlugin(), apply: 'serve' },
+    ancestorOriginsFirefoxPlugin(),
     react(),
     ...(fusionDev ? [mkcertPlugin(), fusionOpenPlugin()] : []),
     pyodideAssetsPlugin(),
