@@ -87,6 +87,50 @@ describe(PlanTasksLayer.name, () => {
     });
   });
 
+  describe('normal arrow on NDT regions', () => {
+    it('should add an arrow (shaft + head) for an ndt_thickness region task', () => {
+      // Arrange + Act: default mock region task is ndt_thickness
+      layer.update([createMockRegionTask()], []);
+      // Assert: ring, disc, arrow shaft, arrow head, hit mesh
+      expect(layer.group.children).toHaveLength(5);
+    });
+
+    it('should not add an arrow for a visual region task', () => {
+      layer.update([createMockRegionTask({ inspectionType: 'visual' })], []);
+      // ring, disc, hit mesh only
+      expect(layer.group.children).toHaveLength(3);
+    });
+
+    it('should point the arrow along the task normal away from the region centre', () => {
+      const task = createMockRegionTask({ position3d: [1, 2, 3], normalVector: [0, 0, 1], radiusM: 0.3 });
+      layer.update([task], []);
+
+      const meshes = layer.group.children as Mesh[];
+      const shaft = meshes[2];
+      const head = meshes[3];
+      // Both sit on the normal axis through the centre…
+      expect(shaft.position.x).toBeCloseTo(1);
+      expect(shaft.position.y).toBeCloseTo(2);
+      expect(head.position.x).toBeCloseTo(1);
+      expect(head.position.y).toBeCloseTo(2);
+      // …with the head further out along +normal than the shaft.
+      expect(shaft.position.z).toBeGreaterThan(3);
+      expect(head.position.z).toBeGreaterThan(shaft.position.z);
+    });
+
+    it('should recolor the arrow with the selection colour', () => {
+      layer.update([createMockRegionTask({ externalId: 'task-r-1' })], []);
+
+      layer.setSelectedTaskId('task-r-1');
+
+      const meshes = layer.group.children as Mesh[];
+      const shaftMat = meshes[2].material as MeshBasicMaterial;
+      const headMat = meshes[3].material as MeshBasicMaterial;
+      expect(shaftMat.color.getHex()).toBe(0x00aaff);
+      expect(headMat.color.getHex()).toBe(0x00aaff);
+    });
+  });
+
   describe('getHitMeshes', () => {
     it('should return empty array when no tasks are loaded', () => {
       expect(layer.getHitMeshes()).toHaveLength(0);

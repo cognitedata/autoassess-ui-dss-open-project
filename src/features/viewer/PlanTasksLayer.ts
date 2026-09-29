@@ -1,6 +1,8 @@
 import {
   CircleGeometry,
   Color,
+  ConeGeometry,
+  CylinderGeometry,
   DoubleSide,
   Group,
   Mesh,
@@ -21,6 +23,11 @@ const TASK_SELECTED_COLOR = new Color(0x00aaff); // cyan
 const TASK_HOVER_COLOR = new Color(0xffd700); // gold — hover without selection
 const DISC_OPACITY = 0.2;
 const ELEMENT_HIT_RADIUS = 0.1; // metres
+
+// Normal arrow on NDT regions, all relative to the region radius.
+const ARROW_SHAFT_LENGTH_FACTOR = 1.2;
+const ARROW_HEAD_LENGTH_FACTOR = 0.5;
+const ARROW_SHAFT_RADIUS_FACTOR = 0.05;
 
 interface TaskMeshEntry {
   hitMesh: Mesh;
@@ -119,6 +126,38 @@ export class PlanTasksLayer {
     disc.quaternion.copy(q);
     this.group.add(disc);
 
+    const ringMeshes: Mesh[] = [ring, disc];
+
+    // NDT thickness is measured along the surface normal, so show the probe
+    // direction as an arrow (shaft + head) out of the region centre.
+    if (task.inspectionType === 'ndt_thickness') {
+      const shaftLength = radiusM * ARROW_SHAFT_LENGTH_FACTOR;
+      const headLength = radiusM * ARROW_HEAD_LENGTH_FACTOR;
+      const shaftRadius = Math.max(radiusM * ARROW_SHAFT_RADIUS_FACTOR, 0.004);
+      // Cylinder and cone geometries extend along +Y; rotate +Y onto the normal.
+      const qArrow = new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), n);
+
+      const shaft = new Mesh(
+        new CylinderGeometry(shaftRadius, shaftRadius, shaftLength, 12),
+        new MeshBasicMaterial({ color: TASK_COLOR.clone(), depthTest: false }),
+      );
+      shaft.renderOrder = 1;
+      shaft.position.copy(pos).addScaledVector(n, SURFACE_LIFT_M + shaftLength / 2);
+      shaft.quaternion.copy(qArrow);
+      this.group.add(shaft);
+
+      const head = new Mesh(
+        new ConeGeometry(shaftRadius * 3, headLength, 16),
+        new MeshBasicMaterial({ color: TASK_COLOR.clone(), depthTest: false }),
+      );
+      head.renderOrder = 1;
+      head.position.copy(pos).addScaledVector(n, SURFACE_LIFT_M + shaftLength + headLength / 2);
+      head.quaternion.copy(qArrow);
+      this.group.add(head);
+
+      ringMeshes.push(shaft, head);
+    }
+
     const hitMesh = new Mesh(
       new SphereGeometry(radiusM, 8, 6),
       new MeshBasicMaterial({ visible: false }),
@@ -127,7 +166,7 @@ export class PlanTasksLayer {
     hitMesh.userData = { taskExternalId: task.externalId };
     this.group.add(hitMesh);
 
-    this._taskMeshes.set(task.externalId, { hitMesh, ringMeshes: [ring, disc] });
+    this._taskMeshes.set(task.externalId, { hitMesh, ringMeshes });
   }
 
   private _addElementTask(

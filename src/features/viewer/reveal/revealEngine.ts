@@ -1,5 +1,6 @@
 import { Cognite3DViewer, TreeIndexNodeCollection } from '@cognite/reveal';
 import type { Cognite3DViewerOptions, NodeAppearance, NodeCollection } from '@cognite/reveal';
+import { AxisViewTool } from '@cognite/reveal/tools';
 import type { CogniteClient } from '@cognite/sdk';
 import { Color } from 'three';
 import type { Box3, Object3D, PerspectiveCamera } from 'three';
@@ -70,6 +71,8 @@ type CadNode = { name: string; treeIndex: number };
 export type RevealEngineDeps = {
   createViewer: (options: Cognite3DViewerOptions) => RevealViewerLike;
   listNodes: (modelId: number, revisionId: number) => Promise<CadNode[]>;
+  /** Adds the corner x/y/z axis gizmo. Only possible on a real Cognite3DViewer. */
+  attachAxisView: (viewer: RevealViewerLike) => void;
 };
 
 function defaultDeps(sdk: CogniteClient): RevealEngineDeps {
@@ -81,6 +84,10 @@ function defaultDeps(sdk: CogniteClient): RevealEngineDeps {
         .autoPagingToArray({ limit: Infinity });
       return nodes.map((n) => ({ name: n.name, treeIndex: n.treeIndex }));
     },
+    attachAxisView: (viewer) => {
+      // The tool needs the concrete viewer; it disposes together with it.
+      if (viewer instanceof Cognite3DViewer) new AxisViewTool(viewer);
+    },
   };
 }
 
@@ -88,7 +95,7 @@ export function createRevealEngine(
   { container, camera, sdk, onLoading }: ViewerEngineOptions,
   overrides?: Partial<RevealEngineDeps>,
 ): ViewerEngine {
-  const { createViewer, listNodes } = { ...defaultDeps(sdk), ...overrides };
+  const { createViewer, listNodes, attachAxisView } = { ...defaultDeps(sdk), ...overrides };
   const viewer = createViewer({
     sdk,
     domElement: container,
@@ -98,6 +105,7 @@ export function createRevealEngine(
     onLoading,
   });
   viewer.setBackgroundColor({ color: new Color(VIEWER_BACKGROUND), alpha: 1 });
+  attachAxisView(viewer);
   let root: Object3D | null = null;
 
   return {

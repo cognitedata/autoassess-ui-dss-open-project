@@ -68,6 +68,17 @@ describe(createRevealEngine.name, () => {
     expect(color?.getHex()).toBe(VIEWER_BACKGROUND);
   });
 
+  it('should attach the axis view tool to the created viewer', () => {
+    const attachAxisView = vi.fn();
+
+    createRevealEngine(
+      { container: document.createElement('div'), camera: new PerspectiveCamera(), sdk: {} as CogniteClient },
+      { createViewer, listNodes, attachAxisView },
+    );
+
+    expect(attachAxisView).toHaveBeenCalledWith(viewer);
+  });
+
   it('should add the scene root once and request a redraw every render', () => {
     const engine = makeEngine();
     const root = new Group();
