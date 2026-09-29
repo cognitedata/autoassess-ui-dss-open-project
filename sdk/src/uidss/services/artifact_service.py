@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -19,6 +20,7 @@ from uidss.services.cognite_file import (
     make_file_external_id,
     upload_cognite_file,
 )
+from uidss.threed.pcd import convert_ply_pointcloud_to_pcd
 
 log = structlog.get_logger()
 
@@ -33,6 +35,7 @@ _List = list  # avoid shadowing by methods named `list_*`
 class ArtifactServiceProtocol(Protocol):
     def upload_ply(self, path: Path, area_external_id: str) -> int: ...
     def upload_pcd(self, path: Path, area_external_id: str, label: str) -> int: ...
+    def upload_ply_pointcloud(self, path: Path, area_external_id: str, label: str) -> int: ...
 
 
 class MeshFileServiceProtocol(Protocol):
@@ -65,6 +68,16 @@ class CdfArtifactService:
             ["autoassess", POINT_CLOUD_TAG, f"area:{area_external_id}", f"label:{label}"],
         )
         log.info("uploaded PCD", path=str(path), label=label, file_id=file_id)
+        return file_id
+
+    def upload_ply_pointcloud(self, path: Path, area_external_id: str, label: str) -> int:
+        """Convert a vertex-only PLY (e.g. D6.2's ut_measurements_colored.ply) to a binary
+        PCD — colours preserved — and upload it through the point-cloud path, named after
+        the source file. The viewer only parses point clouds in PCD form."""
+        with tempfile.TemporaryDirectory() as tmp:
+            pcd_path = convert_ply_pointcloud_to_pcd(path, Path(tmp) / f"{path.stem}.pcd")
+            file_id = self.upload_pcd(pcd_path, area_external_id, label)
+        log.info("uploaded PLY point cloud as PCD", path=str(path), file_id=file_id)
         return file_id
 
     def list_mesh_files(self, area_external_id: str | None = None) -> _List[MeshFile]:

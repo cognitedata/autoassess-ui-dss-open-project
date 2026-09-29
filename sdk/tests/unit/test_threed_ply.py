@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from uidss.threed.ply import read_ply
+from uidss.threed.ply import is_point_cloud_ply, read_ply, read_ply_pointcloud
 
 
 class TestReadAsciiPly:
@@ -160,5 +160,132 @@ def _write_binary(tmp_path: Path) -> Path:
         struct.pack("<BiiiBBB", 3, *f, *c) for f, c in zip(FACES, FACE_RGB, strict=True)
     )
     path = tmp_path / "binary.ply"
+    path.write_bytes(header + body)
+    return path
+
+
+class TestIsPointCloudPly:
+    def test_true_for_a_vertex_only_ply(self, tmp_path: Path) -> None:
+        assert is_point_cloud_ply(_write_pointcloud_ascii(tmp_path, rgb=True))
+
+    def test_true_for_a_face_element_with_zero_count(self, tmp_path: Path) -> None:
+        path = tmp_path / "zero_faces.ply"
+        path.write_text(
+            "ply\nformat ascii 1.0\nelement vertex 1\nproperty float x\nproperty float y\n"
+            "property float z\nelement face 0\nproperty list uchar int vertex_index\n"
+            "end_header\n0 0 0\n"
+        )
+        assert is_point_cloud_ply(path)
+
+    def test_false_for_a_mesh_ply(self, tmp_path: Path) -> None:
+        assert not is_point_cloud_ply(_write_ascii(tmp_path, vertex_rgb=False, face_rgb=False))
+
+    def test_false_for_a_binary_mesh_ply(self, tmp_path: Path) -> None:
+        assert not is_point_cloud_ply(_write_binary(tmp_path))
+
+    def test_raises_for_a_non_ply_file(self, tmp_path: Path) -> None:
+        path = tmp_path / "not_a.ply"
+        path.write_bytes(b"")
+        with pytest.raises(ValueError, match="not a PLY"):
+            is_point_cloud_ply(path)
+
+
+class TestReadPlyPointcloud:
+    def test_reads_ascii_positions_and_colours(self, tmp_path: Path) -> None:
+        cloud = read_ply_pointcloud(_write_pointcloud_ascii(tmp_path, rgb=True))
+
+        np.testing.assert_allclose(cloud.positions, PC_POSITIONS)
+        assert cloud.rgb is not None
+        np.testing.assert_array_equal(cloud.rgb, PC_RGB)
+
+    def test_reads_ascii_without_colours(self, tmp_path: Path) -> None:
+        cloud = read_ply_pointcloud(_write_pointcloud_ascii(tmp_path, rgb=False))
+
+        np.testing.assert_allclose(cloud.positions, PC_POSITIONS)
+        assert cloud.rgb is None
+
+    def test_reads_binary_positions_and_colours(self, tmp_path: Path) -> None:
+        cloud = read_ply_pointcloud(_write_pointcloud_binary(tmp_path, rgb=True))
+
+        np.testing.assert_allclose(cloud.positions, PC_POSITIONS)
+        assert cloud.rgb is not None
+        np.testing.assert_array_equal(cloud.rgb, PC_RGB)
+
+    def test_reads_binary_without_colours(self, tmp_path: Path) -> None:
+        cloud = read_ply_pointcloud(_write_pointcloud_binary(tmp_path, rgb=False))
+
+        np.testing.assert_allclose(cloud.positions, PC_POSITIONS)
+        assert cloud.rgb is None
+
+    def test_reads_double_precision_positions(self, tmp_path: Path) -> None:
+        path = tmp_path / "doubles.ply"
+        header = (
+            b"ply\nformat binary_little_endian 1.0\nelement vertex 2\n"
+            b"property double x\nproperty double y\nproperty double z\nend_header\n"
+        )
+        body = struct.pack("<ddd", 0.5, 1.5, 2.5) + struct.pack("<ddd", -1.0, 0.0, 3.0)
+        path.write_bytes(header + body)
+
+        cloud = read_ply_pointcloud(path)
+
+        np.testing.assert_allclose(cloud.positions, [[0.5, 1.5, 2.5], [-1.0, 0.0, 3.0]])
+
+    def test_reports_a_truncated_ascii_vertex_block(self, tmp_path: Path) -> None:
+        path = _write_pointcloud_ascii(tmp_path, rgb=False)
+        text = path.read_text()
+        path.write_text(text[: text.rindex("-1")])
+
+        with pytest.raises(ValueError, match="truncated"):
+            read_ply_pointcloud(path)
+
+    def test_reports_a_truncated_binary_file(self, tmp_path: Path) -> None:
+        path = _write_pointcloud_binary(tmp_path, rgb=True)
+        path.write_bytes(path.read_bytes()[:-3])
+
+        with pytest.raises(ValueError, match="truncated"):
+            read_ply_pointcloud(path)
+
+    def test_read_ply_still_rejects_a_vertex_only_ply(self, tmp_path: Path) -> None:
+        # Regression: the mesh/CAD pipeline must never accept a point-cloud PLY.
+        with pytest.raises(ValueError, match="face"):
+            read_ply(_write_pointcloud_ascii(tmp_path, rgb=True))
+
+
+PC_POSITIONS = np.array([[0, 0, 0], [1.5, 2.5, 3.5], [-1, 0.25, 4]], dtype=np.float32)
+PC_RGB = np.array([[255, 0, 10], [0, 128, 255], [1, 2, 3]], dtype=np.uint8)
+
+
+def _write_pointcloud_ascii(tmp_path: Path, *, rgb: bool) -> Path:
+    lines = ["ply", "format ascii 1.0", "comment ut measurements"]
+    lines += [f"element vertex {len(PC_POSITIONS)}"]
+    lines += ["property float x", "property float y", "property float z"]
+    if rgb:
+        lines += ["property uchar red", "property uchar green", "property uchar blue"]
+    lines += ["end_header"]
+    for i, p in enumerate(PC_POSITIONS):
+        row = [f"{p[0]:g}", f"{p[1]:g}", f"{p[2]:g}"]
+        if rgb:
+            row += [str(c) for c in PC_RGB[i]]
+        lines.append(" ".join(row))
+    path = tmp_path / "pointcloud_ascii.ply"
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def _write_pointcloud_binary(tmp_path: Path, *, rgb: bool) -> Path:
+    props = "property float x\nproperty float y\nproperty float z\n"
+    if rgb:
+        props += "property uchar red\nproperty uchar green\nproperty uchar blue\n"
+    header = (
+        "ply\nformat binary_little_endian 1.0\n"
+        f"element vertex {len(PC_POSITIONS)}\n{props}end_header\n"
+    ).encode()
+    if rgb:
+        body = b"".join(
+            struct.pack("<fffBBB", *p, *c) for p, c in zip(PC_POSITIONS, PC_RGB, strict=True)
+        )
+    else:
+        body = b"".join(struct.pack("<fff", *p) for p in PC_POSITIONS)
+    path = tmp_path / "pointcloud_binary.ply"
     path.write_bytes(header + body)
     return path

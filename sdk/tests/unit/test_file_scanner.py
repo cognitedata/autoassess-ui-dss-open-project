@@ -227,3 +227,76 @@ class TestMissingTypeNotes:
         _populate(tmp_path, ["b/metrics.yaml", "a/metrics.yaml"])
         notes = missing_type_notes(scan_folder(tmp_path))
         assert any("multiple" in n.lower() and "metrics.yaml" in n for n in notes)
+
+
+MESH_PLY = (
+    b"ply\nformat ascii 1.0\nelement vertex 3\nproperty float x\nproperty float y\n"
+    b"property float z\nelement face 1\nproperty list uchar int vertex_index\nend_header\n"
+    b"0 0 0\n1 0 0\n0 1 0\n3 0 1 2\n"
+)
+POINT_CLOUD_PLY = (
+    b"ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\n"
+    b"property float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\n"
+    b"end_header\n0 0 0 255 0 0\n1 1 1 0 255 0\n"
+)
+
+
+class TestPlyClassification:
+    def test_mesh_ply_is_listed_as_mesh(self, tmp_path: Path) -> None:
+        (tmp_path / "mesh.ply").write_bytes(MESH_PLY)
+
+        result = scan_folder(tmp_path)
+
+        assert result.ply_files == [tmp_path / "mesh.ply"]
+        assert result.point_cloud_ply_files == []
+
+    def test_vertex_only_ply_is_listed_as_point_cloud(self, tmp_path: Path) -> None:
+        (tmp_path / "ut_measurements_colored.ply").write_bytes(POINT_CLOUD_PLY)
+
+        result = scan_folder(tmp_path)
+
+        assert result.ply_files == []
+        assert result.point_cloud_ply_files == [tmp_path / "ut_measurements_colored.ply"]
+        assert result.has_point_cloud_ply
+
+    def test_mixed_folder_splits_mesh_and_point_cloud_plys(self, tmp_path: Path) -> None:
+        (tmp_path / "mesh.ply").write_bytes(MESH_PLY)
+        (tmp_path / "cloud.ply").write_bytes(POINT_CLOUD_PLY)
+
+        result = scan_folder(tmp_path)
+
+        assert result.ply_files == [tmp_path / "mesh.ply"]
+        assert result.point_cloud_ply_files == [tmp_path / "cloud.ply"]
+
+    def test_unreadable_ply_is_kept_as_mesh(self, tmp_path: Path) -> None:
+        # Legacy behaviour: an invalid/empty .ply stays in the mesh list so the
+        # failure surfaces at upload/conversion time instead of being dropped.
+        _populate(tmp_path, ["broken.ply"])
+
+        result = scan_folder(tmp_path)
+
+        assert result.ply_files == [tmp_path / "broken.ply"]
+        assert result.point_cloud_ply_files == []
+
+
+class TestPointCloudPlyNotes:
+    def test_no_mesh_note_still_fires_with_only_a_point_cloud_ply(self, tmp_path: Path) -> None:
+        (tmp_path / "cloud.ply").write_bytes(POINT_CLOUD_PLY)
+
+        notes = missing_type_notes(scan_folder(tmp_path))
+
+        assert any("mesh" in n.lower() and ".ply" in n for n in notes)
+
+    def test_no_pcd_note_does_not_fire_when_a_point_cloud_ply_exists(self, tmp_path: Path) -> None:
+        (tmp_path / "cloud.ply").write_bytes(POINT_CLOUD_PLY)
+
+        notes = missing_type_notes(scan_folder(tmp_path))
+
+        assert not any("point clouds will not be uploaded" in n for n in notes)
+
+    def test_no_pcd_note_fires_when_only_a_mesh_ply_exists(self, tmp_path: Path) -> None:
+        (tmp_path / "mesh.ply").write_bytes(MESH_PLY)
+
+        notes = missing_type_notes(scan_folder(tmp_path))
+
+        assert any("point clouds will not be uploaded" in n for n in notes)

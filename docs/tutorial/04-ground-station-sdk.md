@@ -84,11 +84,14 @@ The folder is scanned **recursively**, and files are recognised by extension or 
 
 | File | Becomes | Format |
 |---|---|---|
-| `*.ply` | Mesh file on the campaign (`cdfFileIds`) | Binary or ASCII PLY. Mesh or point cloud, optional vertex/face colours |
+| `*.ply` with faces | Mesh file on the campaign (`cdfFileIds`) | Binary or ASCII triangle-mesh PLY, optional vertex/face colours |
+| `*.ply` vertex-only | Point cloud on the campaign (`pcdFileIds` + label you type) | Converted to binary PCD on upload, per-vertex RGB preserved |
 | `*.pcd` | Point cloud on the campaign (`pcdFileIds` + label you type) | PCL PCD. A `label` field is used to colour points in the viewer |
 | `*.csv` | `NdtMeasurement` nodes | Columns `timestamp,thickness,x,y,z`. **timestamp in ns**, **thickness in metres** (stored ×1000 as mm) |
 | `ssg.yaml` | `StructuralElement` nodes on the **area** | See below |
 | `metrics.yaml` | `CampaignMetric` nodes | See below |
+
+Coloured vertex-only PLY point clouds (for example D6.2's `ut_measurements_colored.ply` from the NDT registration pipeline) are accepted: the scanner classifies each `.ply` by its header, and a PLY without faces is converted to binary PCD on upload — colours preserved, named after the source (`ut_measurements_colored.pcd`) — so the web viewer renders it like any other point cloud.
 
 What happens during the upload:
 1. Pick vessel and area, then pick an existing campaign or **create a new one** (you're asked for the date, default today).
