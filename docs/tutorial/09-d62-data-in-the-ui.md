@@ -11,7 +11,7 @@ Everything meets in the CDF data model; each interface below is a client of that
 | **CDF data model** (space `autoassess`) | everything below | The contract: plans, tasks, campaigns, structural elements, defects, NDT, 3D models. Authoritative in `src/shared/cdf/dataModel.ts`, mirrored in `sdk/src/uidss/cdf/data_model.py` | [Chapter 2](02-data-model.md) |
 | **Web viewer** (Flows app in Fusion) | inspectors | Author plans, review campaigns and defects, 3D viewing — the only human interface | [Chapter 5](05-web-viewer.md) |
 | **`dss` SDK + CLI** (Python, `sdk/`) | ground station, pipelines | Plans down (`dss plan download`), mission artifacts up (`dss campaign upload`), automatic 3D models (`dss worker`), findings CSV → plan | [Chapter 4](04-ground-station-sdk.md) |
-| **`autoassess_bridge` ROS node** | the robot | CDF ⇄ ROS: publishes the Ready plan, uploads the mission, stores findings as defects | [gbplanner_ros branch `gbplanner_ros-autoassess`](https://github.com/omkarsawant99/gbplanner_ros/tree/gbplanner_ros-autoassess) |
+| **`autoassess_bridge` ROS node** | the robot | CDF ⇄ ROS: publishes the followed plan, uploads the mission, stores findings as defects | [AUTOASSESS/autoassess-cgn-bridge](https://github.com/AUTOASSESS/autoassess-cgn-bridge) (integrated with the flight stack in [gbplanner_ros](https://github.com/omkarsawant99/gbplanner_ros/tree/gbplanner_ros-autoassess)) |
 | **Drone Sandbox** (Flows app, `sandbox/`) | partners without ROS | Browser twin of the SDK and the bridge topics, with a simulated drone and planner | `sandbox/README.md` |
 | **File contracts** | robot ⇄ ground station | `plan.json`, NDT CSV, PLY/PCD, TUM image datasets, `mesh_legend.json` | this chapter + [Chapter 4](04-ground-station-sdk.md) |
 
