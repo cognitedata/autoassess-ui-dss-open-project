@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
-PlanStatus = Literal["Draft", "Ready", "Complete"]
+PlanStatus = Literal["Draft", "Ready", "Active", "Complete"]
 ResultStatus = Literal["InProgress", "Complete"]
 ElementType = Literal["manhole", "longitudinal", "wall", "compartment"]
 InspectionType = Literal["visual", "ndt_thickness"]
