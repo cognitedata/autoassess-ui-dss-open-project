@@ -110,13 +110,16 @@ Scans `<folder>` for mission output files and walks you through an interactive u
 
 | File type | What happens |
 |-----------|--------------|
-| `*.ply` | Uploaded as a PLY mesh artifact |
+| `*.ply` (with faces) | Uploaded as a PLY mesh artifact |
+| `*.ply` (vertex-only) | Converted to binary PCD (colours preserved) and uploaded as a point cloud |
 | `*.pcd` | Uploaded as a PCD point cloud (you provide a label) |
 | `*.csv` | UTM measurements upserted to CDF |
 | `ssg.yaml` | Structural elements upserted to CDF |
 | `metrics.yaml` | Campaign metrics upserted to CDF |
 
 You are prompted to select or create a campaign, confirm each upload step, and optionally mark the campaign and/or plan as **Complete** at the end.
+
+Each `.ply` is classified by its header: one with a `face` element is a mesh; a **vertex-only PLY point cloud** — for example D6.2's `ut_measurements_colored.ply` from the NDT registration pipeline — is accepted too, converted to binary PCD on upload (per-vertex RGB colours preserved, named after the source, e.g. `ut_measurements_colored.pcd`) and shown in the viewer's Layers panel like any other point cloud.
 
 **Example:**
 

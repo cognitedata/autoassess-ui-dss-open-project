@@ -630,6 +630,8 @@ def campaign_upload(
     console.print("\nFound candidate files:")
     for f in scanned.ply_files:
         console.print(f"  {f.relative_to(folder)}")
+    for f in scanned.point_cloud_ply_files:
+        console.print(f"  {f.relative_to(folder)} (point cloud)")
     for f in scanned.pcd_files:
         console.print(f"  {f.relative_to(folder)}")
     for f in scanned.csv_files:
@@ -700,6 +702,18 @@ def campaign_upload(
             label = ask_pcd_label(pcd.name, default_label)
             with console.status("  Uploading..."):
                 fid = artifacts_svc.upload_pcd(pcd, area.external_id, label)
+            pcd_file_ids.append(fid)
+            pcd_file_labels.append(label)
+            uploaded_new_file = True
+            console.print(f"  [green]OK[/green]  (file id {fid})")
+
+    for ply_cloud in scanned.point_cloud_ply_files:
+        console.print(f"\n  {ply_cloud.relative_to(folder)} (vertex-only PLY)")
+        if confirm("  Upload as point cloud (converted to PCD, colours preserved)?"):
+            default_label = ply_cloud.stem.replace("_", " ").title()
+            label = ask_pcd_label(ply_cloud.name, default_label)
+            with console.status("  Converting and uploading..."):
+                fid = artifacts_svc.upload_ply_pointcloud(ply_cloud, area.external_id, label)
             pcd_file_ids.append(fid)
             pcd_file_labels.append(label)
             uploaded_new_file = True

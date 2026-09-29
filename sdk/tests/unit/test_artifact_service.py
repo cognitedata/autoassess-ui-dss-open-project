@@ -190,3 +190,65 @@ def _make_listing_client(nodes: list[MagicMock], numeric_ids: dict[str, int]) ->
         MagicMock(id=i, instance_id=NodeId(SPACE, x)) for x, i in numeric_ids.items()
     ]
     return client
+
+
+class TestUploadPlyPointcloud:
+    def test_returns_file_id(self, tmp_path: Path) -> None:
+        ply = _write_pointcloud_ply(tmp_path / "ut_measurements_colored.ply")
+        client = _make_client(file_id=55)
+
+        result = CdfArtifactService(client).upload_ply_pointcloud(ply, "area-001", "UT colored")
+
+        assert result == 55
+
+    def test_uploads_through_the_point_cloud_path_named_after_the_source(
+        self, tmp_path: Path
+    ) -> None:
+        ply = _write_pointcloud_ply(tmp_path / "ut_measurements_colored.ply")
+        client = _make_client()
+
+        CdfArtifactService(client).upload_ply_pointcloud(ply, "area-007", "UT colored")
+
+        node = _applied_file_node(client)
+        assert node.name == "ut_measurements_colored.pcd"
+        assert node.external_id.endswith("-ut_measurements_colored.pcd")
+        assert node.tags == [
+            "autoassess",
+            "pcd_pointcloud",
+            "area:area-007",
+            "label:UT colored",
+        ]
+
+    def test_uploaded_content_is_a_binary_pcd_with_rgb(self, tmp_path: Path) -> None:
+        ply = _write_pointcloud_ply(tmp_path / "cloud.ply")
+        client = _make_client()
+        uploaded: list[bytes] = []
+
+        def _capture(path: str, **_kwargs: Any) -> Any:
+            uploaded.append(Path(path).read_bytes())
+            return MagicMock(id=42)
+
+        client.files.upload_content.side_effect = _capture
+
+        CdfArtifactService(client).upload_ply_pointcloud(ply, "area-001", "Cloud")
+
+        assert len(uploaded) == 1
+        assert b"FIELDS x y z rgb" in uploaded[0]
+        assert b"DATA binary" in uploaded[0]
+
+    def test_never_uses_classic_files_upload(self, tmp_path: Path) -> None:
+        ply = _write_pointcloud_ply(tmp_path / "cloud.ply")
+        client = _make_client()
+
+        CdfArtifactService(client).upload_ply_pointcloud(ply, "area-001", "Cloud")
+
+        client.files.upload.assert_not_called()
+
+
+def _write_pointcloud_ply(path: Path) -> Path:
+    path.write_bytes(
+        b"ply\nformat ascii 1.0\nelement vertex 2\nproperty float x\nproperty float y\n"
+        b"property float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\n"
+        b"end_header\n0 0 0 255 0 0\n1 1 1 0 255 0\n"
+    )
+    return path
