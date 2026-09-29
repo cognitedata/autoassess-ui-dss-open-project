@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { flyAllTasks } from '../../__mocks__/missions';
+import { emptyMap, plannerResult } from '../../__mocks__/planner';
 import { createProjection, missionViewBounds, SIDE_VIEW, TOP_VIEW } from './projection';
 
 describe(createProjection.name, () => {
@@ -52,4 +53,25 @@ describe(missionViewBounds.name, () => {
     expect(b.max[0]).toBe(5.5);
     expect(b.max[1]).toBeCloseTo(1.3);
   });
+
+  it('should include the planner map when a SimGbPlanner flew', () => {
+    const mission = flyAllTasks({ ...EMPTY_PLAN }, null, { home: [0, 0, 0] });
+    const map = { ...emptyMap([4, 3, 3]), origin: [-1, -1, -1] as [number, number, number] };
+
+    const b = missionViewBounds({ ...mission, planner: plannerResult({ map }) });
+
+    expect(b.min).toEqual([-1, -1, -1]);
+    expect(b.max).toEqual([3, 2, 2]);
+  });
 });
+
+const EMPTY_PLAN = {
+  planExternalId: 'p',
+  name: null,
+  description: null,
+  areaExternalId: 'a',
+  areaName: 'A',
+  mapExternalId: null,
+  downloadedAt: '',
+  tasks: [],
+};

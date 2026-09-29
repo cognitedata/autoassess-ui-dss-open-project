@@ -6,6 +6,7 @@ import type { InspectionPlan } from '../../domain/types';
 import { sampleMission } from '../../sim/playback';
 import type { MissionResult } from '../../sim/simulator';
 import { FlightRecorder } from '../../sim/simulator';
+import { plannerResult } from '../../__mocks__/planner';
 import { TaskListPanel } from './TaskListPanel';
 
 describe(TaskListPanel.name, () => {
@@ -80,6 +81,16 @@ describe(TaskListPanel.name, () => {
 
     expect(rowFor('task-3')).toHaveTextContent('skipped');
     expect(rowFor('task-3')).toHaveTextContent('outside the area bounds');
+  });
+
+  it('should show tasks the planner camera covered with the time, until the drone inspects them', () => {
+    const mission = { ...flight(), planner: plannerResult({ coveredTasks: { 'p-task-2': 2.5, 'p-task-1': 1.5 } }) };
+
+    render(<TaskListPanel mission={mission} sample={sampleMission(mission, 2.6)} plan={READY} />);
+
+    expect(rowFor('task-2')).toHaveTextContent('covered at 2.5 s');
+    expect(rowFor('task-2')).toHaveClass('task-covered');
+    expect(rowFor('task-1')).toHaveTextContent('en route');
   });
 
   it('should say when the plan has no tasks', () => {

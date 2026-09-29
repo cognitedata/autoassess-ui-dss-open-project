@@ -1,6 +1,7 @@
 import { containsPoint, defaultHome } from '../domain/bounds';
 import type { PlanJson, PlanJsonTask } from '../domain/planJson';
 import type { Bounds, InspectionType, PlanStatus, Vec3 } from '../domain/types';
+import type { PlannerResult } from '../planner/types';
 
 /**
  * Deterministic, purely kinematic drone simulator. No physics: the drone flies straight lines at
@@ -127,6 +128,8 @@ export interface MissionResult {
   segments: MissionSegment[];
   events: MissionEvent[];
   summary: MissionSummary;
+  /** The simulated gbplanner's map, graph and coverage, when a SimGbPlanner flew (set by the bridge). */
+  planner?: PlannerResult;
 }
 
 export interface FlightState {

@@ -87,6 +87,26 @@ describe(taskStateAt.name, () => {
     expect(taskStateAt(landed.tasks[0], sampleMission(landed, 0.5))).toBe('pending');
     expect(taskStateAt(landed.tasks[0], sampleMission(landed, 2))).toBe('skipped');
   });
+
+  it('should be covered from the moment the planner camera saw it, until it is inspected', () => {
+    expect(taskStateAt(task, sampleMission(mission, 0.5), 0.2)).toBe('covered');
+    expect(taskStateAt(task, sampleMission(mission, 0.5), 0.8)).toBe('pending');
+    expect(taskStateAt(task, sampleMission(mission, 7), 0.2)).toBe('inspected');
+  });
+
+  it('should show covered rather than skipped for a task the camera covered but the drone never inspected', () => {
+    const rec = new FlightRecorder({ speedMps: 1, home: [0, 0, 0] });
+    rec.loadPlan(planWithOneTask(), null);
+    rec.takeoff();
+    rec.land();
+    const landed = rec.snapshot();
+
+    expect(taskStateAt(landed.tasks[0], sampleMission(landed, 2), 0.5)).toBe('covered');
+  });
+
+  it('should keep the active states ahead of covered', () => {
+    expect(taskStateAt(task, sampleMission(mission, 4), 0.2)).toBe('inspecting');
+  });
 });
 
 describe(sampleTelemetry.name, () => {

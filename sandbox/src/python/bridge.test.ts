@@ -190,6 +190,112 @@ describe(createSandboxBridge.name, () => {
   }
 });
 
+describe('createSandboxBridge: simulated gbplanner (gb_*)', () => {
+  let deps: BridgeDeps;
+  let bridge: SandboxBridge;
+  let resetRun: () => void;
+
+  beforeEach(() => {
+    deps = { getSnapshot: () => tankSnapshot(), onMission: vi.fn(), onPlanPatch: vi.fn() };
+    ({ module: bridge, resetRun } = createSandboxBridge(deps));
+  });
+
+  it('should need a loaded plan before a planner can be created', () => {
+    expect(call(bridge.gb_new(JSON.stringify({ config: 'bwt_inspection', seed: 0 })))).toMatchObject({
+      errorKind: 'state',
+      error: expect.stringContaining('load_plan'),
+    });
+  });
+
+  it('should reject an unknown config and list the available ones', () => {
+    call(bridge.sim_load_plan(JSON.stringify(plan([1, 0, 1]))));
+
+    expect(call(bridge.gb_new(JSON.stringify({ config: 'bwt', seed: 0 })))).toMatchObject({
+      errorKind: 'invalid',
+      error: expect.stringContaining('bwt_inspection, cave_exploration'),
+    });
+  });
+
+  it('should explore, publish paths and post the planner with every mission', () => {
+    const created = startPlanner();
+
+    const init = call(bridge.gb_call(JSON.stringify({ service: 'pci_initialization_trigger', request: {} })));
+    const auto = call(bridge.gb_call(JSON.stringify({ service: 'planner_control_interface/std_srvs/automatic_planning', request: {} })));
+    const steps = spin();
+
+    expect(created.services).toContain('gbplanner/set_global_bound');
+    expect(created.tank).toMatch(/tank/);
+    expect(init.response).toEqual({ success: true });
+    expect(auto.response).toMatchObject({ success: true });
+    expect(steps.some((s) => s.messages?.some((m) => m.topic === '/gbplanner_path'))).toBe(true);
+    expect(steps.at(-1)?.idle).toBe(true);
+    const mission = lastMission(deps);
+    expect(mission.planner?.timeline.length).toBeGreaterThan(0);
+    expect(mission.planner?.map.seenAt).toBeInstanceOf(Float32Array);
+    expect(mission.planner?.progress.at(-1)?.exploredPct).toBeGreaterThan(10);
+  });
+
+  it('should keep the planner on missions posted by sim_* steps', () => {
+    startPlanner();
+    call(bridge.gb_call(JSON.stringify({ service: 'pci_initialization_trigger', request: {} })));
+
+    call(bridge.sim_return_home());
+
+    expect(lastMission(deps).planner).toBeDefined();
+  });
+
+  it('should return a report', () => {
+    startPlanner();
+    call(bridge.gb_call(JSON.stringify({ service: 'pci_initialization_trigger', request: {} })));
+    call(bridge.gb_publish(JSON.stringify({ topic: '/robot_status', msg: { timeRemaining: 100 } })));
+
+    const report = JSON.parse(bridge.gb_report()) as Record<string, unknown>;
+
+    expect(report).toMatchObject({ config: 'bwt_inspection', mode: 'idle', iterations: 0, voxelResolutionM: 0.15 });
+  });
+
+  it('should return unknown services and topics as invalid errors naming the supported ones', () => {
+    startPlanner();
+
+    expect(call(bridge.gb_call(JSON.stringify({ service: 'nope', request: {} })))).toMatchObject({
+      errorKind: 'invalid',
+      error: expect.stringContaining('pci_initialization_trigger'),
+    });
+    expect(call(bridge.gb_publish(JSON.stringify({ topic: '/nope', msg: {} })))).toMatchObject({
+      errorKind: 'invalid',
+      error: expect.stringContaining('/move_base_simple/goal'),
+    });
+  });
+
+  it('should drop the planner for a new run and for a new drone', () => {
+    startPlanner();
+    resetRun();
+
+    expect(call(bridge.gb_spin_step('{}'))).toMatchObject({ errorKind: 'state', error: expect.stringContaining('SimGbPlanner') });
+
+    call(bridge.sim_load_plan(JSON.stringify(plan([1, 0, 1]))));
+    call(bridge.gb_new(JSON.stringify({ config: 'bwt_inspection', seed: 0 })));
+    call(bridge.sim_new('{}'));
+    expect(call(bridge.gb_report())).toMatchObject({ errorKind: 'state' });
+  });
+
+  function startPlanner(): BridgeReply {
+    call(bridge.sim_new(JSON.stringify({ speedMps: 1 })));
+    call(bridge.sim_load_plan(JSON.stringify(plan([1, 0, 1]))));
+    return call(bridge.gb_new(JSON.stringify({ config: 'bwt_inspection', seed: 0 })));
+  }
+
+  function spin(): BridgeReply[] {
+    const out: BridgeReply[] = [];
+    for (let i = 0; i < 500; i++) {
+      const step = call(bridge.gb_spin_step(JSON.stringify({ untilS: null })));
+      out.push(step);
+      if (step.idle || step.error) break;
+    }
+    return out;
+  }
+});
+
 describe(parseFlightOptions.name, () => {
   it('should pick the known options', () => {
     expect(parseFlightOptions({ speedMps: 2, maxFlightTimeS: 60, home: [1, 2, 3], junk: 1 })).toEqual({
@@ -221,6 +327,22 @@ interface BridgeReply {
   errorKind?: string;
   mission?: MissionResult;
   telemetry?: unknown[];
+  idle?: boolean;
+  messages?: Array<{ topic: string }>;
+  response?: unknown;
+  services?: string[];
+  tank?: string;
+}
+
+function lastMission(d: BridgeDeps): MissionResult {
+  const calls = vi.mocked(d.onMission).mock.calls;
+  return calls[calls.length - 1][0];
+}
+
+/** A 4 x 3 x 2.4 m area: small enough for a quick planner run. */
+function tankSnapshot(): SandboxSnapshot {
+  const base = snapshotWithBox();
+  return { ...base, areas: [{ ...base.areas[0], bounds: { min: [0, -1.5, 0], max: [4, 1.5, 2.4] } }] };
 }
 
 function call(json: string): BridgeReply {

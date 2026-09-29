@@ -1,6 +1,6 @@
 // Headless smoke test in demo mode: runs every starter example, checks Python output, flies the
-// simulated drone to completion, checks the task list and the (simulated) plan status, and fails
-// on page errors or CSP violations.
+// simulated drone to completion, checks the task list and the (simulated) plan status, checks the
+// simulated gbplanner's status strip and coverage, and fails on page errors or CSP violations.
 //   BASE_URL=http://localhost:3010 SCREENSHOT_DIR=/tmp/shots node e2e/smoke.mjs
 //   (HTTPS dev server with a self-signed cert is fine: certificate errors are ignored.)
 import { mkdirSync } from 'node:fs';
@@ -124,6 +124,79 @@ await page.getByTestId('data-summary').filter({ hasText: '4 plans' }).waitFor({ 
 await runExample('1. List plans', 'Tank 3 follow-up');
 if (!/Ready\s+Tank 3 follow-up/.test(await consoleText())) throw new Error('reload did not reset the simulated status');
 console.log('OK  Reload drops the simulated status change');
+
+// Simulated gbplanner: explore + inspect (example 5), target reach per task (example 6).
+const plannerStatus = async () => {
+  const text = await page.getByTestId('planner-status').innerText();
+  const num = (re) => Number(re.exec(text)?.[1] ?? NaN);
+  return {
+    text: text.replace(/\s+/g, ' '),
+    iteration: num(/Iteration (\d+)/),
+    explored: num(/Explored (\d+)%/),
+    coverage: num(/Coverage (\d+)%/),
+    covered: num(/Covered (\d+) \//),
+  };
+};
+const planRows = async () => (await taskStates()).map((r) => r.text);
+
+const out5 = await runExample('5. gbplanner: explore + inspect', 'plan tasks covered by the inspection camera:');
+const covered5 = Number(/plan tasks covered by the inspection camera: (\d+)\/8/.exec(out5)?.[1]);
+if (!(covered5 >= 6)) throw new Error(`5: only ${covered5}/8 tasks covered:\n${out5}`);
+if (!/path t=\s*\d+\.\ds\s+\d+ poses/.test(out5)) throw new Error('5: no /gbplanner_path callbacks printed');
+// One compartment at a time: the log announces the sequence, the report prints per-compartment coverage.
+if (!out5.includes('[gbplanner] Compartments: 5')) throw new Error(`5: no compartment sequencing in:\n${out5}`);
+if (!/passing the manhole at .* to compartment 2\/5/.test(out5)) throw new Error('5: no manhole pass logged');
+const perCompartment5 = out5.match(/compartment \d \(x [-\d. –]+\): explored \d+%, coverage \d+%/g) ?? [];
+if (perCompartment5.length !== 5) throw new Error(`5: expected 5 per-compartment report lines, got ${perCompartment5.length}`);
+await page.getByLabel('Speed').selectOption('10');
+await page.getByRole('button', { name: 'Restart' }).click();
+await page.waitForTimeout(1500);
+await shot('gbplanner-5a-exploring');
+await page.waitForTimeout(1500);
+const early = await plannerStatus();
+await page.waitForTimeout(3000);
+const later = await plannerStatus();
+if (!(later.explored > early.explored || later.coverage > early.coverage) || !(later.iteration >= early.iteration)) {
+  throw new Error(`5: planner status not advancing: ${early.text} -> ${later.text}`);
+}
+console.log(`OK  5 mid-run: ${early.text}  ->  ${later.text}`);
+await shot('gbplanner-5b-inspecting');
+await page.getByLabel('Speed').selectOption('25');
+await page.getByTestId('flight-phase').filter({ hasText: 'Landed' }).waitFor({ timeout: 90_000 });
+const end5 = await plannerStatus();
+const rows5 = await planRows();
+const coveredRows = rows5.filter((r) => /covered at/.test(r)).length;
+if (coveredRows !== covered5 || end5.covered !== covered5) {
+  throw new Error(`5: ${coveredRows} covered rows / strip ${end5.covered}, report ${covered5}: ${JSON.stringify(rows5)}`);
+}
+if (!(end5.coverage >= 60)) throw new Error(`5: low final coverage: ${end5.text}`);
+if (!/Compartment 5\/5/.test(end5.text)) throw new Error(`5: strip missing "Compartment 5/5": ${end5.text}`);
+console.log(`OK  5 landed: ${end5.text}; ${coveredRows}/${rows5.length} rows covered`);
+await shot('gbplanner-5c-landed');
+
+const out6 = await runExample('6. gbplanner: target reach per task', 'inspected demo-plan-followup-task-1');
+const inspected6 = (out6.match(/^inspected demo-plan-followup-task-\d+/gm) ?? []).length;
+if (inspected6 < 5) throw new Error(`6: only ${inspected6} tasks inspected:\n${out6}`);
+await page.getByLabel('Speed').selectOption('10');
+await page.getByRole('button', { name: 'Restart' }).click();
+await page.waitForTimeout(2500);
+await shot('gbplanner-6a-target-reach-mid-run');
+await waitLanded('6', inspected6);
+await shot('gbplanner-6b-target-reach-landed');
+
+// The simulated autoassess_bridge (example 7): plan in over /autoassess/plan, findings out,
+// upload status transitions with the simulated defect detections at mission end.
+const out7 = await runExample('7. bridge: plans in, findings out', 'upload_status: idle -> exporting_mesh -> uploading -> complete');
+if (!out7.includes('plan_id: demo-plan-followup')) throw new Error(`7: no latched plan_id in:\n${out7}`);
+if (!out7.includes('[autoassess_bridge] skipping finding: entry 1: z is missing')) {
+  throw new Error(`7: bad finding not skipped+logged in:\n${out7}`);
+}
+if (!out7.includes('simulated: 2 defect detections created on the campaign (not written to CDF)')) {
+  throw new Error(`7: no simulated defect detections in:\n${out7}`);
+}
+if (!out7.includes('defects: 2 created: defect-corr-001, defect-crack-002')) throw new Error(`7: defect ids missing in:\n${out7}`);
+await waitLanded('7', 8);
+await shot('bridge-7-landed');
 
 // Stop: an infinite loop must be stoppable and Python must come back.
 await page.getByLabel('Starter example').selectOption({ label: '1. List plans' });
