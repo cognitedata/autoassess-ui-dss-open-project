@@ -10,7 +10,7 @@ interface SegmentLegendProps {
 
 /**
  * Overlay listing the mesh segment classes ("manhole", "structure", …) with their colours
- * while the mesh is in the Defects colour mode. Renders nothing otherwise.
+ * while the mesh is in the Segments colour mode. Renders nothing otherwise.
  */
 export function SegmentLegend({ cadModels, className }: SegmentLegendProps) {
   const { visible, entries, overflowCount } = useSegmentLegendViewModel(cadModels);

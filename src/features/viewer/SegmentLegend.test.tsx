@@ -10,7 +10,10 @@ describe(SegmentLegend.name, () => {
   let mockContext: SegmentLegendViewModelContextType;
 
   beforeEach(() => {
-    mockContext = { useMeshColorMode: vi.fn(() => 'defects' as const) };
+    mockContext = {
+      useMeshColorMode: vi.fn(() => 'defects' as const),
+      useCampaignLayerVisibility: vi.fn(() => ({ 'result-1': { MESH: true } })),
+    };
   });
 
   it('shows each class name with a swatch of its segment colour', () => {
@@ -40,7 +43,7 @@ describe(SegmentLegend.name, () => {
     expect(screen.getByText('#0080ff')).toBeInTheDocument();
   });
 
-  it('renders nothing when the mesh is not in Defects colour mode', () => {
+  it('renders nothing when the mesh is not in Segments colour mode', () => {
     vi.mocked(mockContext.useMeshColorMode).mockReturnValue('colorization');
 
     renderLegend([cadModel({ palette: { manhole: [255, 0, 0] }, legend: { ff0000: 'manhole' } })]);
@@ -50,6 +53,14 @@ describe(SegmentLegend.name, () => {
 
   it('renders nothing when no model carries a palette with class names', () => {
     renderLegend([cadModel({ palette: { seg_ff0000: [255, 0, 0] }, legend: {} })]);
+
+    expect(screen.queryByTestId('segment-legend')).not.toBeInTheDocument();
+  });
+
+  it('renders nothing when the only palette-bearing campaign\'s mesh layer is hidden', () => {
+    vi.mocked(mockContext.useCampaignLayerVisibility).mockReturnValue({ 'result-1': { MESH: false } });
+
+    renderLegend([cadModel({ palette: { manhole: [255, 0, 0] }, legend: { ff0000: 'manhole' } })]);
 
     expect(screen.queryByTestId('segment-legend')).not.toBeInTheDocument();
   });

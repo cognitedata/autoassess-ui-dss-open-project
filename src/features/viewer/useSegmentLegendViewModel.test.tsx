@@ -15,7 +15,10 @@ describe(useSegmentLegendViewModel.name, () => {
   let wrapper: ComponentType<{ children: ReactNode }>;
 
   beforeEach(() => {
-    mockContext = { useMeshColorMode: vi.fn(() => 'defects' as const) };
+    mockContext = {
+      useMeshColorMode: vi.fn(() => 'defects' as const),
+      useCampaignLayerVisibility: vi.fn(() => ({ 'result-1': { MESH: true } })),
+    };
     wrapper = ({ children }) => (
       <SegmentLegendViewModelContext.Provider value={mockContext}>{children}</SegmentLegendViewModelContext.Provider>
     );
@@ -93,6 +96,49 @@ describe(useSegmentLegendViewModel.name, () => {
     const { result } = renderHook(() => useSegmentLegendViewModel(models), { wrapper });
 
     expect(result.current.visible).toBe(false);
+  });
+
+  it('excludes the colours of campaigns whose mesh layer is hidden', () => {
+    vi.mocked(mockContext.useCampaignLayerVisibility).mockReturnValue({
+      'result-1': { MESH: true },
+      'result-2': { MESH: false },
+    });
+    const models = [
+      cadModel({ palette: { manhole: [255, 0, 0] }, legend: { ff0000: 'manhole' } }),
+      cadModel({
+        key: 'result-2/f2-cad-model',
+        campaignExternalId: 'result-2',
+        palette: { structure: [0, 255, 0] },
+        legend: { '00ff00': 'structure' },
+      }),
+    ];
+
+    const { result } = renderHook(() => useSegmentLegendViewModel(models), { wrapper });
+
+    expect(result.current.entries.map((e) => e.label)).toEqual(['manhole']);
+  });
+
+  it('is hidden when no campaign mesh layer is visible', () => {
+    vi.mocked(mockContext.useCampaignLayerVisibility).mockReturnValue({});
+    const models = [cadModel({ palette: { manhole: [255, 0, 0] }, legend: { ff0000: 'manhole' } })];
+
+    const { result } = renderHook(() => useSegmentLegendViewModel(models), { wrapper });
+
+    expect(result.current.visible).toBe(false);
+    expect(result.current.entries).toEqual([]);
+  });
+
+  it('picks up a campaign\'s colours when its mesh layer is toggled back on', () => {
+    vi.mocked(mockContext.useCampaignLayerVisibility).mockReturnValue({ 'result-1': { MESH: false } });
+    const models = [cadModel({ palette: { manhole: [255, 0, 0] }, legend: { ff0000: 'manhole' } })];
+    const { result, rerender } = renderHook(() => useSegmentLegendViewModel(models), { wrapper });
+    expect(result.current.visible).toBe(false);
+
+    vi.mocked(mockContext.useCampaignLayerVisibility).mockReturnValue({ 'result-1': { MESH: true } });
+    rerender();
+
+    expect(result.current.visible).toBe(true);
+    expect(result.current.entries.map((e) => e.label)).toEqual(['manhole']);
   });
 
   it('caps the entries and reports how many colours were left out', () => {

@@ -53,17 +53,20 @@ export function ViewerPage() {
   const droneImagesResult = useDroneImages(AUTOASSESS_SPACE, areaId);
   const droneImages = droneImagesResult.data ?? [];
 
-  const droneImageCampaignIds = useMemo(
-    () => new Set(droneImages.map((img) => img.campaignExternalId)),
-    [droneImages],
-  );
+  const droneImageCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const img of droneImages) {
+      counts.set(img.campaignExternalId, (counts.get(img.campaignExternalId) ?? 0) + 1);
+    }
+    return counts;
+  }, [droneImages]);
 
   const layerPanelViewModel = useLayerPanelViewModel(
     AUTOASSESS_SPACE,
     areaId,
     elements.length > 0,
     ndtMeasurements,
-    droneImageCampaignIds,
+    droneImageCounts,
   );
 
   // Campaigns with uploaded meshes. Each mesh file has its own CDF CAD model (streamed by

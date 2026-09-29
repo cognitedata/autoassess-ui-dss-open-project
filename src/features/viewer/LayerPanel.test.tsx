@@ -206,7 +206,7 @@ describe(LayerPanel.name, () => {
     expect(screen.getByRole('button', { name: 'Color mode options' })).toBeDefined();
   });
 
-  it('clicking color mode button opens dropdown with Color and Semantics options', async () => {
+  it('clicking color mode button opens dropdown with Colorization and Segments options', async () => {
     render(
       <LayerPanel
         viewModel={makeViewModel({
@@ -219,8 +219,8 @@ describe(LayerPanel.name, () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Color mode options' }));
 
-    expect(screen.getByRole('menuitemradio', { name: /Color/ })).toBeDefined();
-    expect(screen.getByRole('menuitemradio', { name: /Defects/ })).toBeDefined();
+    expect(screen.getByRole('menuitemradio', { name: /Colorization/ })).toBeDefined();
+    expect(screen.getByRole('menuitemradio', { name: /Segments/ })).toBeDefined();
   });
 
   it('selecting a color mode option calls onColorModeChange and closes the menu', async () => {
@@ -240,7 +240,7 @@ describe(LayerPanel.name, () => {
     await userEvent.click(screen.getByRole('menuitemradio', { name: /Colorization/ }));
 
     expect(onColorModeChange).toHaveBeenCalledWith('MESH', 'colorization');
-    expect(screen.queryByRole('menuitemradio', { name: /Defects/ })).toBeNull();
+    expect(screen.queryByRole('menuitemradio', { name: /Segments/ })).toBeNull();
   });
 
   it('does not render PCD rows when campaign pcdLayers is empty', () => {
