@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+from cognite.client.data_classes.data_modeling.instances import Properties
+
 from uidss.cdf.data_model import AREA_VIEW, SPACE, VESSEL_VIEW, view_key
 from uidss.models import Area, Vessel
 from uidss.services.area_service import CdfAreaService
@@ -19,7 +21,7 @@ def _make_node(space: str, external_id: str, view: tuple[str, str, str], props: 
     node.instance_type = "node"
     node.space = space
     node.external_id = external_id
-    node.properties = {space: {view_key(view): props}}
+    node.properties = Properties.load({space: {view_key(view): props}})
     return node
 
 
