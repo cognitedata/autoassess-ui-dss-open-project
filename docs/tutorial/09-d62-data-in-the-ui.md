@@ -31,6 +31,8 @@ The bridge's ROS surface uses typed messages (`rosmsg show autoassess_bridge/…
 
 `autoassess_full.launch` also starts a `dss worker`, so mission meshes get their 3D models built automatically.
 
+Which plan does the bridge send down? The rule, in order: the area's plan with status **Active** (set explicitly in the viewer), otherwise the **newest-edited Ready** plan. The viewer badges the plan this rule selects, and the bridge republishes only when that plan's content actually changes (topics are latched, so late-starting nodes still receive it).
+
 ## One area = one physical space = one coordinate frame
 
 Everything in an area renders in a single shared frame: meshes, point clouds, drone images, NDT points, structural elements, plans. Upload two datasets with different origins into the same area and they will float next to each other like debris — the viewer is doing exactly what it was told. Rules of thumb:
