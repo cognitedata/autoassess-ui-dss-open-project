@@ -88,6 +88,7 @@ describe(CdfInspectionPlanService.name, () => {
         mapExternalId: 'campaign-01581-001',
         status: 'Draft',
         createdTime: 1700000000000,
+        lastUpdatedTime: 1700000000000,
         name: null,
         description: null,
       },
@@ -134,6 +135,16 @@ describe(CdfInspectionPlanService.name, () => {
     expect(plan.status).toBe('Ready');
   });
 
+  it('should map Active status correctly', async () => {
+    mockInstancesList.mockResolvedValue({
+      items: [makeMockPlanNodeResponse({ status: 'Active' })],
+    });
+
+    const [plan] = await service.listForArea('autoassess', 'area-01581');
+
+    expect(plan.status).toBe('Active');
+  });
+
   it('should map Complete status correctly', async () => {
     mockInstancesList.mockResolvedValue({
       items: [makeMockPlanNodeResponse({ status: 'Complete' })],
@@ -152,6 +163,16 @@ describe(CdfInspectionPlanService.name, () => {
     const [plan] = await service.listForArea('autoassess', 'area-01581');
 
     expect(plan.status).toBe('Draft');
+  });
+
+  it('should map lastUpdatedTime from DMS node metadata', async () => {
+    mockInstancesList.mockResolvedValue({
+      items: [makeMockPlanNodeResponse({}, { lastUpdatedTime: 1760000000000 })],
+    });
+
+    const [plan] = await service.listForArea('autoassess', 'area-01581');
+
+    expect(plan.lastUpdatedTime).toBe(1760000000000);
   });
 
   it('should map createdTime from DMS node metadata', async () => {
@@ -285,6 +306,7 @@ describe(CdfInspectionPlanService.name, () => {
         mapExternalId: 'campaign-01581-001',
         status: 'Draft',
         createdTime: 1700000000000,
+        lastUpdatedTime: 1700000000000,
         name: null,
         description: null,
       });
@@ -339,6 +361,25 @@ describe(CdfInspectionPlanService.name, () => {
               },
             ],
           },
+        ],
+      });
+    });
+
+    it('should accept the Active status', async () => {
+      mockInstancesUpsert.mockResolvedValue({ items: [] });
+
+      await service.updateStatus('autoassess', 'plan-area-01581-001', 'Active');
+
+      expect(mockInstancesUpsert).toHaveBeenCalledWith({
+        items: [
+          expect.objectContaining({
+            sources: [
+              {
+                source: { type: 'view', ...INSPECTION_PLAN_VIEW },
+                properties: { status: 'Active' },
+              },
+            ],
+          }),
         ],
       });
     });

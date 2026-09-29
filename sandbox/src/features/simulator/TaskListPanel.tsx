@@ -24,6 +24,7 @@ const STATE_LABELS: Record<TaskState, string> = {
 const PLAN_STATUS_TONE: Record<InspectionPlan['status'], string> = {
   Draft: 'pill-neutral',
   Ready: 'pill-live',
+  Active: 'pill-busy',
   Complete: 'pill-ok',
 };
 

@@ -835,7 +835,7 @@ describe('PythonSession (real Pyodide)', () => {
     });
 
     it('should label an unnamed plan in the fly-mission example', async () => {
-      const renamed = await run(quirkySession, example('fly-mission').replace("key=lambda c: c[1].created_time", "key=lambda c: c[1].external_id == 'empty-ready'").replace('counts[p.external_id] > 0', 'True'));
+      const renamed = await run(quirkySession, example('fly-mission').replace('key=lambda c: (c[1].status == "Active", c[1].created_time)', "key=lambda c: c[1].external_id == 'empty-ready'").replace('counts[p.external_id] > 0', 'True'));
 
       expect(renamed.stdout).toContain('Plan: (unnamed) in BWT 3P');
     });
@@ -845,6 +845,29 @@ describe('PythonSession (real Pyodide)', () => {
 
       expect(stdout).toContain('BWT 3P / (unnamed) [Ready]');
       expect(stdout).not.toContain('/ None [');
+    });
+  });
+
+  describe('with an Active plan (the robot bridge rule: Active wins, else newest Ready)', () => {
+    it('should fly the Active plan in the fly-mission example even when a Ready plan is newer', async () => {
+      // The Active plan is older than the newest Ready plan (demo-plan-followup) but must win.
+      const followup = snapshot.plans.find((p) => p.externalId === 'demo-plan-followup')!;
+      const active: InspectionPlan = {
+        ...followup,
+        externalId: 'active-plan',
+        name: 'Active plan',
+        status: 'Active',
+        createdTime: followup.createdTime - 1_000_000,
+      };
+      const tasks = snapshot.tasks
+        .filter((t) => t.planExternalId === 'demo-plan-followup')
+        .map((t) => ({ ...t, externalId: t.externalId.replace('demo-plan-followup', 'active-plan'), planExternalId: 'active-plan' }));
+      session.setSnapshot({ ...snapshot, plans: [...snapshot.plans, active], tasks: [...snapshot.tasks, ...tasks] });
+
+      const { outcome, missions } = await run(session, example('fly-mission'));
+
+      expect(outcome).toEqual({ ok: true });
+      expect(missions.at(-1)?.planExternalId).toBe('active-plan');
     });
   });
 });

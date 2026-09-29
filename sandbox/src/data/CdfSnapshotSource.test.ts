@@ -109,6 +109,16 @@ describe(createCdfSnapshotSource.name, () => {
     ]);
   });
 
+  it('should keep the Active plan status (not fall back to Draft)', async () => {
+    pages['InspectionPlanView'] = [
+      page([node('plan-active', 'InspectionPlanView/4', { area: ref('area-1'), status: 'Active' }, 1500)]),
+    ];
+
+    const snapshot = await createCdfSnapshotSource(reader).load();
+
+    expect(snapshot.plans.map((p) => [p.externalId, p.status])).toEqual([['plan-active', 'Active']]);
+  });
+
   it('should follow cursors, resolve element targets and drop tasks of unknown plans', async () => {
     const snapshot = await createCdfSnapshotSource(reader).load();
 

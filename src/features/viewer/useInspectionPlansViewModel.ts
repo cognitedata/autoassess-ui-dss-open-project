@@ -126,6 +126,19 @@ export interface InspectionPlansViewModel {
   isCreatingPlan: boolean;
   selectPlan(plan: InspectionPlan): void;
   deactivatePlan(): void;
+  /**
+   * The plan the robot bridge will fly, or null when neither exists: the area's Active plan
+   * if there is one, else the newest-updated Ready plan (the same rule the bridge applies).
+   */
+  robotPlanExternalId: string | null;
+  /**
+   * Promote a Ready plan to Active — the plan the robot bridge will fly. Any other Active
+   * plan in the area is demoted back to Ready first, so at most one plan is Active.
+   * No-op for plans that are not Ready.
+   */
+  setPlanActive(plan: InspectionPlan): void;
+  /** Demote an Active plan back to Ready. No-op for plans that are not Active. */
+  setPlanInactive(plan: InspectionPlan): void;
   /** Toggle Draft ↔ Ready. No-op when plan is In Progress or Complete (read-only). */
   togglePlanStatus(): void;
   isTogglingStatus: boolean;
@@ -141,6 +154,19 @@ export interface InspectionPlansViewModel {
 }
 
 // ---- Implementation ----
+
+/**
+ * The robot bridge's plan-selection rule: the Active plan if one exists, else the
+ * newest-updated Ready plan, else null. Ties are broken by lastUpdatedTime, newest first.
+ */
+export function selectRobotPlan(plans: InspectionPlan[]): InspectionPlan | null {
+  const newestUpdatedFirst = [...plans].sort((a, b) => b.lastUpdatedTime - a.lastUpdatedTime);
+  return (
+    newestUpdatedFirst.find((p) => p.status === 'Active') ??
+    newestUpdatedFirst.find((p) => p.status === 'Ready') ??
+    null
+  );
+}
 
 export function useInspectionPlansViewModel(
   areaSpace: string,
@@ -206,6 +232,73 @@ export function useInspectionPlansViewModel(
       });
     },
     [createPlanMutation, setActivePlan],
+  );
+
+  const plans = plansQuery.data ?? [];
+
+  const robotPlanExternalId = useMemo(
+    () => selectRobotPlan(plans)?.externalId ?? null,
+    [plans],
+  );
+
+  const setPlanActive = useCallback(
+    (plan: InspectionPlan) => {
+      if (plan.status !== 'Ready') return;
+      const demote = plans.filter(
+        (p) => p.status === 'Active' && p.externalId !== plan.externalId,
+      );
+      const run = async () => {
+        // Demote first, then promote: the area never holds two Active plans.
+        for (const other of demote) {
+          await updateStatusMutation.mutateAsync({
+            space: other.space,
+            externalId: other.externalId,
+            areaSpace,
+            areaExternalId,
+            status: 'Ready',
+          });
+          updateActivePlan((p) =>
+            p.externalId === other.externalId ? { ...p, status: 'Ready' } : p,
+          );
+        }
+        await updateStatusMutation.mutateAsync({
+          space: plan.space,
+          externalId: plan.externalId,
+          areaSpace,
+          areaExternalId,
+          status: 'Active',
+        });
+        updateActivePlan((p) =>
+          p.externalId === plan.externalId ? { ...p, status: 'Active' } : p,
+        );
+      };
+      void run().catch(() => {
+        // React Query surfaces the mutation error; the plans query refetch restores the truth.
+      });
+    },
+    [plans, updateStatusMutation, areaSpace, areaExternalId, updateActivePlan],
+  );
+
+  const setPlanInactive = useCallback(
+    (plan: InspectionPlan) => {
+      if (plan.status !== 'Active') return;
+      updateStatusMutation.mutate(
+        {
+          space: plan.space,
+          externalId: plan.externalId,
+          areaSpace,
+          areaExternalId,
+          status: 'Ready',
+        },
+        {
+          onSuccess: () =>
+            updateActivePlan((p) =>
+              p.externalId === plan.externalId ? { ...p, status: 'Ready' } : p,
+            ),
+        },
+      );
+    },
+    [updateStatusMutation, areaSpace, areaExternalId, updateActivePlan],
   );
 
   const togglePlanStatus = useCallback(() => {
@@ -319,7 +412,7 @@ export function useInspectionPlansViewModel(
   );
 
   return {
-    plans: plansQuery.data ?? [],
+    plans,
     isLoadingPlans: plansQuery.isLoading,
     activePlan,
     tasks,
@@ -331,6 +424,9 @@ export function useInspectionPlansViewModel(
     isCreatingPlan: createPlanMutation.isPending,
     selectPlan: setActivePlan,
     deactivatePlan: clearActivePlan,
+    robotPlanExternalId,
+    setPlanActive,
+    setPlanInactive,
     togglePlanStatus,
     isTogglingStatus: updateStatusMutation.isPending,
     updatePlan,

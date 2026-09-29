@@ -337,6 +337,222 @@ describe(useInspectionPlansViewModel.name, () => {
     });
   });
 
+  describe('robotPlanExternalId (which plan the robot bridge will fly)', () => {
+    it('should pick the Active plan even when a Ready plan was updated more recently', () => {
+      const active = createMockInspectionPlan({ externalId: 'plan-active', status: 'Active', lastUpdatedTime: 1000 });
+      const newerReady = createMockInspectionPlan({ externalId: 'plan-ready', status: 'Ready', lastUpdatedTime: 2000 });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([newerReady, active]));
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      expect(result.current.robotPlanExternalId).toBe('plan-active');
+    });
+
+    it('should fall back to the newest-updated Ready plan when no plan is Active', () => {
+      const older = createMockInspectionPlan({ externalId: 'plan-older', status: 'Ready', lastUpdatedTime: 1000 });
+      const newest = createMockInspectionPlan({ externalId: 'plan-newest', status: 'Ready', lastUpdatedTime: 3000 });
+      const draft = createMockInspectionPlan({ externalId: 'plan-draft', status: 'Draft', lastUpdatedTime: 9000 });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([older, newest, draft]));
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      expect(result.current.robotPlanExternalId).toBe('plan-newest');
+    });
+
+    it('should be null when the area has neither an Active nor a Ready plan', () => {
+      const draft = createMockInspectionPlan({ externalId: 'plan-draft', status: 'Draft' });
+      const complete = createMockInspectionPlan({ externalId: 'plan-complete', status: 'Complete' });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([draft, complete]));
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      expect(result.current.robotPlanExternalId).toBeNull();
+    });
+  });
+
+  describe('setPlanActive', () => {
+    it('should promote a Ready plan to Active', async () => {
+      const ready = createMockInspectionPlan({ externalId: 'plan-ready', status: 'Ready' });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([ready]));
+      const mutateAsyncMock = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(mockDeps.useUpdatePlanStatus).mockReturnValue(
+        makeMutation({ mutateAsync: mutateAsyncMock }),
+      );
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      await act(async () => {
+        result.current.setPlanActive(ready);
+      });
+
+      expect(mutateAsyncMock).toHaveBeenCalledTimes(1);
+      expect(mutateAsyncMock).toHaveBeenCalledWith({
+        space: ready.space,
+        externalId: 'plan-ready',
+        areaSpace: 'autoassess',
+        areaExternalId: 'area-01581',
+        status: 'Active',
+      });
+    });
+
+    it('should demote the existing Active plan to Ready before promoting, so only one plan is Active', async () => {
+      const currentActive = createMockInspectionPlan({ externalId: 'plan-old-active', status: 'Active' });
+      const ready = createMockInspectionPlan({ externalId: 'plan-ready', status: 'Ready' });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([currentActive, ready]));
+      const mutateAsyncMock = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(mockDeps.useUpdatePlanStatus).mockReturnValue(
+        makeMutation({ mutateAsync: mutateAsyncMock }),
+      );
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      await act(async () => {
+        result.current.setPlanActive(ready);
+      });
+
+      expect(mutateAsyncMock).toHaveBeenCalledTimes(2);
+      // Demote first, then promote: the area never holds two Active plans.
+      expect(mutateAsyncMock.mock.calls[0][0]).toEqual({
+        space: currentActive.space,
+        externalId: 'plan-old-active',
+        areaSpace: 'autoassess',
+        areaExternalId: 'area-01581',
+        status: 'Ready',
+      });
+      expect(mutateAsyncMock.mock.calls[1][0]).toEqual({
+        space: ready.space,
+        externalId: 'plan-ready',
+        areaSpace: 'autoassess',
+        areaExternalId: 'area-01581',
+        status: 'Active',
+      });
+    });
+
+    it('should not promote a plan that is not Ready', async () => {
+      const draft = createMockInspectionPlan({ externalId: 'plan-draft', status: 'Draft' });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([draft]));
+      const mutateAsyncMock = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(mockDeps.useUpdatePlanStatus).mockReturnValue(
+        makeMutation({ mutateAsync: mutateAsyncMock }),
+      );
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      await act(async () => {
+        result.current.setPlanActive(draft);
+      });
+
+      expect(mutateAsyncMock).not.toHaveBeenCalled();
+    });
+
+    it('should sync the selected plan status in the store when it is the promoted plan', async () => {
+      const ready = createMockInspectionPlan({ externalId: 'plan-ready', status: 'Ready' });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([ready]));
+      useActivePlanStore.setState({ activePlan: ready });
+      const mutateAsyncMock = vi.fn().mockResolvedValue(undefined);
+      vi.mocked(mockDeps.useUpdatePlanStatus).mockReturnValue(
+        makeMutation({ mutateAsync: mutateAsyncMock }),
+      );
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      await act(async () => {
+        result.current.setPlanActive(ready);
+      });
+
+      expect(useActivePlanStore.getState().activePlan?.status).toBe('Active');
+    });
+  });
+
+  describe('setPlanInactive', () => {
+    it('should demote an Active plan back to Ready', () => {
+      const active = createMockInspectionPlan({ externalId: 'plan-active', status: 'Active' });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([active]));
+      const mutateMock = vi.fn();
+      vi.mocked(mockDeps.useUpdatePlanStatus).mockReturnValue(makeMutation({ mutate: mutateMock }));
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      act(() => {
+        result.current.setPlanInactive(active);
+      });
+
+      expect(mutateMock).toHaveBeenCalledWith(
+        {
+          space: active.space,
+          externalId: 'plan-active',
+          areaSpace: 'autoassess',
+          areaExternalId: 'area-01581',
+          status: 'Ready',
+        },
+        expect.any(Object),
+      );
+    });
+
+    it('should not demote a plan that is not Active', () => {
+      const ready = createMockInspectionPlan({ externalId: 'plan-ready', status: 'Ready' });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([ready]));
+      const mutateMock = vi.fn();
+      vi.mocked(mockDeps.useUpdatePlanStatus).mockReturnValue(makeMutation({ mutate: mutateMock }));
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      act(() => {
+        result.current.setPlanInactive(ready);
+      });
+
+      expect(mutateMock).not.toHaveBeenCalled();
+    });
+
+    it('should sync the selected plan status in the store on success', () => {
+      const active = createMockInspectionPlan({ externalId: 'plan-active', status: 'Active' });
+      vi.mocked(mockDeps.useInspectionPlans).mockReturnValue(makeSuccess([active]));
+      useActivePlanStore.setState({ activePlan: active });
+      const mutateMock = vi.fn().mockImplementation((_vars, options) => {
+        options?.onSuccess?.();
+      });
+      vi.mocked(mockDeps.useUpdatePlanStatus).mockReturnValue(makeMutation({ mutate: mutateMock }));
+
+      const { result } = renderHook(
+        () => useInspectionPlansViewModel('autoassess', 'area-01581'),
+        { wrapper },
+      );
+
+      act(() => {
+        result.current.setPlanInactive(active);
+      });
+
+      expect(useActivePlanStore.getState().activePlan?.status).toBe('Ready');
+    });
+  });
+
   describe('updatePlan', () => {
     it('should call the update mutation with the active plan ids and input', () => {
       const plan = createMockInspectionPlan({ status: 'Draft' });
