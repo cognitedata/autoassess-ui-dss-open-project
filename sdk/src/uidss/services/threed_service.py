@@ -88,6 +88,7 @@ class ThreeDServiceProtocol(Protocol):
         proxy_path: Path,
         palette: dict[str, tuple[int, int, int]],
         has_texture: bool,
+        legend: dict[str, str] | None = None,
     ) -> CadModel: ...
     def find_model_for_file(self, file_external_id: str) -> CadModel | None: ...
     def find_models_for_files(self, file_external_ids: Sequence[str]) -> dict[str, CadModel]: ...
@@ -142,8 +143,13 @@ class CdfThreeDService:
         proxy_path: Path,
         palette: dict[str, tuple[int, int, int]],
         has_texture: bool,
+        legend: dict[str, str] | None = None,
     ) -> CadModel:
-        """Upload the converted mesh and create the file's model + Core DM nodes."""
+        """Upload the converted mesh and create the file's model + Core DM nodes.
+
+        ``legend`` maps segment colour hex to class name (``uidss.threed.legend``); when
+        non-empty it is stored in the model node's description JSON for the web viewer.
+        """
         xid = source.external_id
         tags = ["autoassess", f"sourceFileId:{source.file_id}"]
         if source.area_external_id:
@@ -179,10 +185,12 @@ class CdfThreeDService:
             collision_proxy_file_id=proxy_id,
             source_file_id=source.file_id,
         )
-        description = {
+        description: dict[str, object] = {
             "palette": {k: list(v) for k, v in palette.items()},
             "hasTexture": has_texture,
         }
+        if legend:
+            description["legend"] = legend
         self._client.data_modeling.instances.apply(
             nodes=[
                 CogniteCADModelApply(

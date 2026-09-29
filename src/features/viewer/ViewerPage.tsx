@@ -22,6 +22,7 @@ import type { InspectionTask, InspectionType } from './InspectionTaskService';
 import type { PlyViewerHandle } from './PlyViewer';
 import { MissingCadModelNotice } from './reveal/MissingCadModelNotice';
 import { useCampaignCadModels } from './reveal/useCampaignCadModels';
+import { SegmentLegend } from './SegmentLegend';
 import type { SelectionHit } from './selection';
 import { SelectionPanel } from './SelectionPanel';
 import { useDefectsPanelViewModel } from './useDefectsPanelViewModel';
@@ -428,6 +429,10 @@ export function ViewerPage() {
                 }
               />
             </Suspense>
+          )}
+
+          {!isLoading && !error && hasModel && (
+            <SegmentLegend cadModels={cadModels} className="absolute bottom-4 left-4" />
           )}
 
           {!isLoading && !error && area != null && cadModelsResult.isError && (

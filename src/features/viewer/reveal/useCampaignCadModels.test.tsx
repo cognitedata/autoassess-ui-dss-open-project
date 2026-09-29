@@ -93,5 +93,6 @@ function cadModel(campaignExternalId: string, status = 'Done'): CampaignCadModel
     collisionProxyFileId: 3,
     hasTexture: false,
     palette: {},
+    legend: {},
   };
 }

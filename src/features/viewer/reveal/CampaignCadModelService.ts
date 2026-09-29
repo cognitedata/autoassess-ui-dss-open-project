@@ -28,6 +28,12 @@ export interface CampaignCadModel {
   hasTexture: boolean;
   /** CAD node (OBJ group) name → segment colour, for the "defects" colour mode. */
   palette: Record<string, [number, number, number]>;
+  /**
+   * Segment colour (lowercase 6-digit hex, no `#`) → class name (for example "manhole"),
+   * from a `mesh_legend.json` or the default NTNU convention at build time. Empty for
+   * models built before legends existed.
+   */
+  legend: Record<string, string>;
 }
 
 /** A campaign and the mesh files it lists (`cdfFileIds`). */
@@ -230,7 +236,7 @@ function parseModel(
   if (modelId === null || proxyId === null || revisionId === null || !Number.isSafeInteger(revisionId)) {
     return null;
   }
-  const { palette, hasTexture } = parseDescription(model.props.description);
+  const { palette, hasTexture, legend } = parseDescription(model.props.description);
   return {
     nodeId,
     createdTime: model.createdTime,
@@ -241,6 +247,7 @@ function parseModel(
     collisionProxyFileId: proxyId,
     hasTexture,
     palette,
+    legend,
   };
 }
 
@@ -251,9 +258,9 @@ function idFromTags(tags: string[], name: string): number | null {
   return Number.isSafeInteger(value) && value > 0 ? value : null;
 }
 
-function parseDescription(description: unknown): Pick<CampaignCadModel, 'palette' | 'hasTexture'> {
+function parseDescription(description: unknown): Pick<CampaignCadModel, 'palette' | 'hasTexture' | 'legend'> {
   try {
-    const parsed = JSON.parse(String(description)) as { palette?: unknown; hasTexture?: unknown };
+    const parsed = JSON.parse(String(description)) as { palette?: unknown; hasTexture?: unknown; legend?: unknown };
     const palette: CampaignCadModel['palette'] = {};
     if (parsed.palette && typeof parsed.palette === 'object') {
       for (const [name, rgb] of Object.entries(parsed.palette as Record<string, unknown>)) {
@@ -262,8 +269,19 @@ function parseDescription(description: unknown): Pick<CampaignCadModel, 'palette
         }
       }
     }
-    return { palette, hasTexture: parsed.hasTexture === true };
+    return { palette, hasTexture: parsed.hasTexture === true, legend: parseLegend(parsed.legend) };
   } catch {
-    return { palette: {}, hasTexture: false };
+    return { palette: {}, hasTexture: false, legend: {} };
   }
+}
+
+/** Colour → class-name legend from the description; malformed entries are dropped. */
+function parseLegend(raw: unknown): Record<string, string> {
+  const legend: Record<string, string> = {};
+  if (!raw || typeof raw !== 'object') return legend;
+  for (const [key, name] of Object.entries(raw as Record<string, unknown>)) {
+    const hex = /^#?([0-9a-f]{6})$/.exec(key.trim().toLowerCase())?.[1];
+    if (hex && typeof name === 'string' && name.trim().length > 0) legend[hex] = name.trim();
+  }
+  return legend;
 }

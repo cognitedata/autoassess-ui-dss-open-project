@@ -134,6 +134,25 @@ metrics:
     unit: percentage   # or: decimal
 ```
 
+#### Naming mesh segments (`mesh_legend.json`)
+
+A mission mesh's per-face RGB encodes semantic classes, and each colour becomes its own CAD
+segment. To give those segments real names instead of `seg_<rgb>`, put a `mesh_legend.json`
+next to the source PLY before building the 3D model:
+
+```json
+{ "#ff0000": "manhole", "00ff00": "structure" }
+```
+
+Keys are 6-digit hex colours (case-insensitive, `#` optional) and must match the face colour
+exactly; values are class names. Without a legend file, the built-in default in
+[`sdk/src/uidss/threed/legend.py`](../../sdk/src/uidss/threed/legend.py) applies — the NTNU
+stack's convention (near-pure red → `manhole`, near-pure green → `structure`); a legend file
+replaces it entirely. Either way, an unmatched colour keeps its anonymous `seg_<rgb>` name.
+Named segments become CAD groups `<class>_c<chunk>`, and the colour → class mapping is stored
+as `legend` in the model node's description JSON, where the web viewer's Defects legend reads
+it ([chapter 2](02-data-model.md#3d-models-core-dm)).
+
 ### 1.4c Automatic: the robot uploads, `dss worker` builds
 
 ```bash

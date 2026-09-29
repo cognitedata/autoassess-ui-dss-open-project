@@ -6,6 +6,7 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
+import pytest
 
 from uidss.models import MeshFile
 from uidss.services.threed_service import CadModel
@@ -26,6 +27,7 @@ class StubThreeDService:
         proxy_path: Path,
         palette: dict[str, tuple[int, int, int]],
         has_texture: bool,
+        legend: dict[str, str] | None = None,
     ) -> CadModel:
         self.calls.append(
             {
@@ -34,6 +36,7 @@ class StubThreeDService:
                 "proxy": read_ply(proxy_path),
                 "palette": palette,
                 "has_texture": has_texture,
+                "legend": legend,
             }
         )
         return CadModel(f"{source.external_id}-cad-model", "rev", 1, 2, "Queued", 3, source.file_id)
@@ -53,8 +56,33 @@ class TestBuildFileCadModel:
         call = stub.calls[0]
         assert call["source"] == _SOURCE
         assert call["zip_members"] == ["model.mtl", "model.obj"]
-        assert call["palette"] == {"seg_ff0000": (255, 0, 0)}
+        # Pure red faces are named by the default NTNU legend.
+        assert call["palette"] == {"manhole": (255, 0, 0)}
+        assert call["legend"] == {"ff0000": "manhole"}
         assert call["has_texture"] is False
+
+    def test_mesh_legend_json_next_to_the_ply_overrides_the_default_names(
+        self, tmp_path: Path
+    ) -> None:
+        ply = _write_ascii_ply(tmp_path / "mesh.ply", offset=0.0)
+        (tmp_path / "mesh_legend.json").write_text('{"#FF0000": "anode"}')
+        stub = StubThreeDService()
+
+        build_file_cad_model(ply, _SOURCE, stub, tmp_path / "work")
+
+        call = stub.calls[0]
+        assert call["palette"] == {"anode": (255, 0, 0)}
+        assert call["legend"] == {"ff0000": "anode"}
+
+    def test_an_invalid_mesh_legend_json_fails_the_build(self, tmp_path: Path) -> None:
+        ply = _write_ascii_ply(tmp_path / "mesh.ply", offset=0.0)
+        (tmp_path / "mesh_legend.json").write_text("{not json")
+        stub = StubThreeDService()
+
+        with pytest.raises(ValueError, match=r"mesh_legend\.json"):
+            build_file_cad_model(ply, _SOURCE, stub, tmp_path / "work")
+
+        assert stub.calls == []
 
     def test_writes_collision_proxy_readable_as_ply(self, tmp_path: Path) -> None:
         ply = _write_ascii_ply(tmp_path / "mesh.ply", offset=0.0)

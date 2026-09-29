@@ -80,7 +80,7 @@ flowchart LR
 
 - `PlyViewer` owns the camera, controls, fly-to and all overlay layers. `reveal/ExternalCameraManager.ts` hands its camera to Reveal, and the overlays are added with `viewer.addObject3D`.
 - Reveal's picking returns no surface normals, so double-click picking, the hover ring and image-pixel rays ray-cast the **collision proxy** (never drawn).
-- Colour modes: *Colorization* shows the baked camera texture, or a flat colour for meshes without camera RGB; *Defects* shows the segment colours (the CAD nodes are styled by name).
+- Colour modes: *Colorization* shows the baked camera texture, or a flat colour for meshes without camera RGB; *Defects* shows the segment colours (the CAD nodes are styled by name). In Defects mode a small legend overlay (`SegmentLegend.tsx`) lists each named class ("manhole", "structure", …) with its colour, from the `legend` the SDK stores on the CAD model node ([chapter 4](04-ground-station-sdk.md#naming-mesh-segments-mesh_legendjson)); models without named segments show no legend.
 - A campaign shows one model per mesh file it lists (plus its legacy campaign model for older meshes). Only campaigns whose Mesh toggle is on are streamed.
 - Meshes without a model yet show a notice ("3D model being built by `dss worker`", with the `dss campaign build-3d-model` command as a fallback); the viewer polls every 30 s and shows the model when it's there. An area with no mesh at all says "No scan data yet".
 - PCD point clouds are still loaded client-side. Reveal's point-cloud decoder needs `connect-src data:`, which the Flows CSP doesn't allow.
