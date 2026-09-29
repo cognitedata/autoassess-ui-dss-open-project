@@ -1,6 +1,7 @@
 import { Cognite3DViewer, TreeIndexNodeCollection } from '@cognite/reveal';
 import type { Cognite3DViewerOptions, NodeAppearance, NodeCollection } from '@cognite/reveal';
 import { AxisViewTool } from '@cognite/reveal/tools';
+import type { AxisBoxConfig, AxisBoxFaceConfig } from '@cognite/reveal/tools';
 import type { CogniteClient } from '@cognite/sdk';
 import { Color } from 'three';
 import type { Box3, Object3D, PerspectiveCamera } from 'three';
@@ -75,6 +76,35 @@ export type RevealEngineDeps = {
   attachAxisView: (viewer: RevealViewerLike) => void;
 };
 
+/**
+ * Corner gizmo config: label the faces by signed axis instead of Reveal's
+ * Front/Back/Left/Right/Up/Down, so the gizmo can be read directly against the
+ * inspection plan's x/y/z (the scene root is added in the plan frame, so the
+ * gizmo axes are the plan axes — no remapping). Conventional axis colours:
+ * x red, y green, z blue, with white labels for contrast.
+ */
+export function axisViewConfig(): AxisBoxConfig {
+  const face = (label: string, faceColour: number): AxisBoxFaceConfig => ({
+    label,
+    faceColor: new Color(faceColour),
+    fontColor: new Color(0xffffff),
+  });
+  const X_RED = 0xc62828;
+  const Y_GREEN = 0x2e7d32;
+  const Z_BLUE = 0x1565c0;
+  return {
+    size: 128,
+    faces: {
+      xPositiveFace: face('+X', X_RED),
+      xNegativeFace: face('-X', X_RED),
+      yPositiveFace: face('+Y', Y_GREEN),
+      yNegativeFace: face('-Y', Y_GREEN),
+      zPositiveFace: face('+Z', Z_BLUE),
+      zNegativeFace: face('-Z', Z_BLUE),
+    },
+  };
+}
+
 function defaultDeps(sdk: CogniteClient): RevealEngineDeps {
   return {
     createViewer: (options) => new Cognite3DViewer(options),
@@ -86,7 +116,7 @@ function defaultDeps(sdk: CogniteClient): RevealEngineDeps {
     },
     attachAxisView: (viewer) => {
       // The tool needs the concrete viewer; it disposes together with it.
-      if (viewer instanceof Cognite3DViewer) new AxisViewTool(viewer);
+      if (viewer instanceof Cognite3DViewer) new AxisViewTool(viewer, axisViewConfig());
     },
   };
 }
