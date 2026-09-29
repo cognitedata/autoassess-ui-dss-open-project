@@ -49,6 +49,7 @@ function makeDoneCadModel(campaignExternalId: string, status = 'Done') {
     collisionProxyFileId: 42,
     hasTexture: false,
     palette: {},
+    legend: {},
   };
 }
 

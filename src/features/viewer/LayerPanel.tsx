@@ -307,7 +307,7 @@ function LayerRow({ layer, onToggle, onColorModeChange }: LayerRowProps) {
                   ) : (
                     <IconCircle size={8} className="shrink-0" aria-hidden />
                   )}
-                  {mode === 'colorization' ? 'Colorization' : 'Defects'}
+                  {mode === 'colorization' ? 'Colorization' : 'Segments'}
                 </button>
               ))}
             </div>

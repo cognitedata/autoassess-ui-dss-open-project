@@ -25,6 +25,7 @@ import numpy.typing as npt
 
 from uidss.threed.bake import TextureBake, bake_vertex_colours
 from uidss.threed.decimate import weld
+from uidss.threed.legend import ColourClassifier, rgb_to_hex, sanitise_class_name
 from uidss.threed.ply import PlyMesh
 from uidss.threed.png import write_png
 
@@ -39,6 +40,7 @@ class CadConversion:
     palette: dict[str, tuple[int, int, int]]  # group/material name -> segment RGB
     vertex_count: int
     face_count: int
+    legend: dict[str, str]  # segment colour hex -> class name, for the named segments only
 
 
 def convert_mesh_to_cad_zip(
@@ -47,9 +49,10 @@ def convert_mesh_to_cad_zip(
     max_texture_size: int = 2048,
     max_faces_per_chunk: int = 100_000,
     workers: int = 1,
+    classify: ColourClassifier | None = None,
 ) -> CadConversion:
     welded = weld(mesh)
-    segment_of_face, segment_palette = _segment_groups(mesh)
+    segment_of_face, segment_palette, legend = _segment_groups(mesh, classify)
 
     uvs: npt.NDArray[np.float32] | None = None
     textures: list[npt.NDArray[np.uint8]] = []
@@ -88,6 +91,7 @@ def convert_mesh_to_cad_zip(
         palette=palette,
         vertex_count=len(welded.positions),
         face_count=len(welded.faces),
+        legend=legend,
     )
 
 
@@ -131,17 +135,35 @@ def _submesh(mesh: PlyMesh, faces: npt.NDArray[np.int64]) -> PlyMesh:
 
 def _segment_groups(
     mesh: PlyMesh,
-) -> tuple[npt.NDArray[np.int64], dict[str, tuple[int, int, int]]]:
+    classify: ColourClassifier | None,
+) -> tuple[npt.NDArray[np.int64], dict[str, tuple[int, int, int]], dict[str, str]]:
+    """Face → segment index, segment palette, and the colour → class legend actually used.
+
+    A segment whose colour *classify* names is grouped as the sanitised class name (a second
+    colour with the same class gets ``<class>_<rgb>``); any other keeps ``seg_<rgb>``.
+    """
     if mesh.face_rgb is None:
-        return np.zeros(len(mesh.faces), dtype=np.int64), {"seg_none": NEUTRAL_RGB}
+        return np.zeros(len(mesh.faces), dtype=np.int64), {"seg_none": NEUTRAL_RGB}, {}
     colours, first, inverse = np.unique(
         mesh.face_rgb, axis=0, return_index=True, return_inverse=True
     )
     order = np.argsort(first)  # palette in order of first appearance
     rank = np.empty_like(order)
     rank[order] = np.arange(len(order))
-    palette = {f"seg_{r:02x}{g:02x}{b:02x}": (int(r), int(g), int(b)) for r, g, b in colours[order]}
-    return rank[inverse.reshape(-1)], palette
+    palette: dict[str, tuple[int, int, int]] = {}
+    legend: dict[str, str] = {}
+    for r, g, b in colours[order]:
+        rgb = (int(r), int(g), int(b))
+        hex_colour = rgb_to_hex(rgb)
+        name = f"seg_{hex_colour}"
+        class_name = classify(rgb) if classify else None
+        if class_name:
+            stem = sanitise_class_name(class_name)
+            if stem:
+                name = stem if stem not in palette else f"{stem}_{hex_colour}"
+                legend[hex_colour] = class_name
+        palette[name] = rgb
+    return rank[inverse.reshape(-1)], palette, legend
 
 
 def _chunked_groups(

@@ -220,6 +220,7 @@ function cadModel(overrides: Partial<CampaignCadModel>): CampaignCadModel {
     collisionProxyFileId: 7,
     hasTexture: false,
     palette: { seg_ff0000_c0: [255, 0, 0], seg_ff0000_c1: [255, 0, 0], seg_00ff00_c0: [0, 255, 0] },
+    legend: {},
     ...overrides,
   };
 }

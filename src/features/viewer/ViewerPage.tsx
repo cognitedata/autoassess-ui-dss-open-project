@@ -22,6 +22,7 @@ import type { InspectionTask, InspectionType } from './InspectionTaskService';
 import type { PlyViewerHandle } from './PlyViewer';
 import { MissingCadModelNotice } from './reveal/MissingCadModelNotice';
 import { useCampaignCadModels } from './reveal/useCampaignCadModels';
+import { SegmentLegend } from './SegmentLegend';
 import type { SelectionHit } from './selection';
 import { SelectionPanel } from './SelectionPanel';
 import { useDefectsPanelViewModel } from './useDefectsPanelViewModel';
@@ -52,17 +53,20 @@ export function ViewerPage() {
   const droneImagesResult = useDroneImages(AUTOASSESS_SPACE, areaId);
   const droneImages = droneImagesResult.data ?? [];
 
-  const droneImageCampaignIds = useMemo(
-    () => new Set(droneImages.map((img) => img.campaignExternalId)),
-    [droneImages],
-  );
+  const droneImageCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const img of droneImages) {
+      counts.set(img.campaignExternalId, (counts.get(img.campaignExternalId) ?? 0) + 1);
+    }
+    return counts;
+  }, [droneImages]);
 
   const layerPanelViewModel = useLayerPanelViewModel(
     AUTOASSESS_SPACE,
     areaId,
     elements.length > 0,
     ndtMeasurements,
-    droneImageCampaignIds,
+    droneImageCounts,
   );
 
   // Campaigns with uploaded meshes. Each mesh file has its own CDF CAD model (streamed by
@@ -428,6 +432,10 @@ export function ViewerPage() {
                 }
               />
             </Suspense>
+          )}
+
+          {!isLoading && !error && hasModel && (
+            <SegmentLegend cadModels={cadModels} className="absolute bottom-4 left-4" />
           )}
 
           {!isLoading && !error && area != null && cadModelsResult.isError && (

@@ -87,7 +87,7 @@ The viewer renders meshes as **CDF 3D models** streamed by Cognite Reveal, not t
 | CogniteFile | `{file}-cad-source` | OBJ + MTL (+ textures) zip, the source of the 3D revision |
 | CogniteFile | `{file}-collision-proxy` | Decimated binary PLY (≤ 200k faces), used for picking and surface normals |
 | 3D model + revision | numeric ids | Created with the 3D API from the zip's numeric file id |
-| `CogniteCADModel` node | `{file}-cad-model` | `tags` hold `sourceFileId:<id>`, `area:<id>`, `threeDModelId:<id>` and `collisionProxyFileId:<id>`; `description` holds the segment-colour palette as JSON |
+| `CogniteCADModel` node | `{file}-cad-model` | `tags` hold `sourceFileId:<id>`, `area:<id>`, `threeDModelId:<id>` and `collisionProxyFileId:<id>`; `description` holds JSON: the segment-colour `palette`, `hasTexture`, and (when segments are named) a `legend` of colour hex → class name |
 | `CogniteCADRevision` node | `{file}-cad-revision` | `revisionId`, `status`, `model3D` → the model node |
 
 If `{file}` plus the suffix is longer than 255 characters, `{file}` is cut to fit (`derived_id` in the SDK, `derivedId` in the viewer). `CogniteCADModel` has no property for the classic 3D model id, which is why it's in the tags.

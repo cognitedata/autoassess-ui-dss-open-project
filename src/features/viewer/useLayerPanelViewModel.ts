@@ -113,12 +113,32 @@ function computeAvailableLayers(
   return layers;
 }
 
+/**
+ * Short summary of what a campaign contains ("mesh + 2 point clouds + 66 images"),
+ * so two same-day campaigns are distinguishable in the layer panel.
+ * Empty string when the campaign has no meshes, point clouds or images.
+ */
+export function campaignContentHint(
+  result: Pick<InspectionResult, 'cdfFileIds' | 'pcdFileIds'>,
+  imageCount: number,
+): string {
+  const parts: string[] = [];
+  if (result.cdfFileIds.length > 0) parts.push('mesh');
+  const pcdCount = result.pcdFileIds.length;
+  if (pcdCount === 1) parts.push('point cloud');
+  else if (pcdCount > 1) parts.push(`${pcdCount} point clouds`);
+  if (imageCount === 1) parts.push('1 image');
+  else if (imageCount > 1) parts.push(`${imageCount} images`);
+  return parts.join(' + ');
+}
+
 export function useLayerPanelViewModel(
   areaSpace: string,
   areaExternalId: string,
   hasStructuralElements: boolean,
   ndtMeasurements: NdtMeasurement[] = [],
-  droneImageCampaignIds: ReadonlySet<string> = new Set(),
+  /** Drone-image count per campaign externalId (absent or 0 = no images). */
+  droneImageCounts: ReadonlyMap<string, number> = new Map(),
 ): LayerPanelViewModel {
   const { useInspectionResults } = useContext(LayerPanelViewModelContext);
   const resultsQuery = useInspectionResults(areaSpace, areaExternalId);
@@ -158,7 +178,7 @@ export function useLayerPanelViewModel(
   useEffect(() => {
     if (!rawResults) return;
     const ndtKey = [...ndtCampaignIds].sort().join(',');
-    const imgKey = [...droneImageCampaignIds].sort().join(',');
+    const imgKey = [...droneImageCounts.keys()].filter((id) => (droneImageCounts.get(id) ?? 0) > 0).sort().join(',');
     const key = rawResults.map((r) => r.externalId).join(',') + `:ndt=${ndtKey}:img=${imgKey}`;
     if (initKeyRef.current === key) return;
     initKeyRef.current = key;
@@ -167,13 +187,13 @@ export function useLayerPanelViewModel(
       availableLayers: computeAvailableLayers(
         r,
         ndtCampaignIds.has(r.externalId),
-        droneImageCampaignIds.has(r.externalId),
+        (droneImageCounts.get(r.externalId) ?? 0) > 0,
       ),
     }));
     initCampaigns(inits);
     const allPcdKeys = rawResults.flatMap((r) => r.pcdFileIds.map(String));
     initPcdKeys(allPcdKeys);
-  }, [rawResults, ndtCampaignIds, droneImageCampaignIds, initCampaigns, initPcdKeys]);
+  }, [rawResults, ndtCampaignIds, droneImageCounts, initCampaigns, initPcdKeys]);
 
   // Initialise static layers when structural elements are confirmed present.
   const staticInitRef = useRef(false);
@@ -185,19 +205,21 @@ export function useLayerPanelViewModel(
 
   const campaigns: CampaignRowViewModel[] = (rawResults ?? []).map((result) => {
     const campaignVis = visibility[result.externalId] ?? {};
+    const imageCount = droneImageCounts.get(result.externalId) ?? 0;
     const availableLayers = computeAvailableLayers(
       result,
       ndtCampaignIds.has(result.externalId),
-      droneImageCampaignIds.has(result.externalId),
+      imageCount > 0,
     );
     const pcdLayers: PcdLayerViewModel[] = result.pcdFileIds.map((fileId, i) => ({
       key: String(fileId),
       label: result.pcdFileLabels[i] ?? `Point cloud ${i + 1}`,
       isVisible: isPcdVisible(String(fileId)),
     }));
+    const hint = campaignContentHint(result, imageCount);
     return {
       campaignId: result.externalId,
-      label: `Campaign ${result.date}`,
+      label: hint ? `Campaign ${result.date} · ${hint}` : `Campaign ${result.date}`,
       isExpanded: expanded[result.externalId] ?? false,
       layers: availableLayers.map((layerType) => ({
         layerType,
