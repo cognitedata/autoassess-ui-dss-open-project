@@ -66,14 +66,34 @@ def csv_matches_schema(path: Path) -> bool:
     return not missing_csv_columns(path)
 
 
+def _timestamp_to_iso(value: float) -> str:
+    """Epoch timestamp of any resolution to ISO 8601 UTC.
+
+    The D6.2 contract (confirmed with TUM, Sep 2026) writes epoch SECONDS.
+    Older exports used nanoseconds; milli- and microseconds also appear in
+    ROS tooling. The magnitudes never overlap (seconds stay below 1e11 until
+    the year 5138), so divide by 1000 until the value is in the seconds range.
+    """
+    while value >= 1e11:
+        value /= 1000.0
+    return datetime.fromtimestamp(value, tz=UTC).isoformat()
+
+
+def _thickness_to_mm(value: float) -> float:
+    """Thickness column to millimetres.
+
+    The D6.2 contract writes MILLIMETRES. Older exports wrote metres; no hull
+    plate is thinner than 0.5 mm, so a value below 0.5 can only be metres.
+    """
+    return value * 1000.0 if value < 0.5 else value
+
+
 def _parse_csv_rows(path: Path) -> list[NdtMeasurement]:
     rows: list[NdtMeasurement] = []
     with path.open(newline="") as fh:
         for row in csv.DictReader(fh):
-            ts_ns = float(row["timestamp"])
-            ts_s = ts_ns / 1e9
-            timestamp = datetime.fromtimestamp(ts_s, tz=UTC).isoformat()
-            thickness_mm = float(row["thickness"]) * 1000.0
+            timestamp = _timestamp_to_iso(float(row["timestamp"]))
+            thickness_mm = _thickness_to_mm(float(row["thickness"]))
             position3d = (float(row["x"]), float(row["y"]), float(row["z"]))
             rows.append(
                 NdtMeasurement(
