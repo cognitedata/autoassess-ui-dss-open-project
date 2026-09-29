@@ -6,10 +6,12 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 import mkcert from 'vite-plugin-mkcert';
 
+import { ancestorOriginsFirefoxPlugin } from './src/shared/host/ancestorOriginsPatch';
+
 export default defineConfig({
   base: './',
   // manifestCspPlugin() must be first — its middleware sets the CSP header before any HTML response
-  plugins: [manifestCspPlugin(), react(), mkcert(), fusionOpenPlugin(), tailwindcss()],
+  plugins: [manifestCspPlugin(), ancestorOriginsFirefoxPlugin(), react(), mkcert(), fusionOpenPlugin(), tailwindcss()],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),

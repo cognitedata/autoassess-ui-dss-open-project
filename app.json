@@ -2,7 +2,7 @@
   "name": "autoassess uidss",
   "description": "Autoassess user interface and decision support system",
   "externalId": "autoassess-uidss",
-  "versionTag": "0.0.3",
+  "versionTag": "0.0.5",
   "infra": "appsApi",
   "deployments": [
     {
