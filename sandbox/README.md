@@ -335,6 +335,9 @@ and the UI animation come from the same computation.
    the tasks, publish findings on `/autoassess/findings` (including a bad one, which is skipped
    and logged), land, and watch `/autoassess/upload_status` go
    `idle → exporting_mesh → uploading → complete` with the simulated defect detections.
+   Tasks blocked by the geofence pre-flight (e.g. a target outside the area bounds, which real
+   plans do have) are skipped like the real robot would; the real stack's equivalent guard is
+   gbplanner's global bound (`bound_margin_m`).
 
 Ctrl/⌘+Enter runs the editor contents. Edits are kept per example while you switch between them.
 **Reset** restores the current example and starts a fresh interpreter.

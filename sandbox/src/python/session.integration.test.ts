@@ -7,7 +7,7 @@ import { loadPyodide } from 'pyodide';
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { createDemoSnapshotSource } from '../data/DemoSnapshotSource';
-import type { InspectionPlan, SandboxSnapshot } from '../domain/types';
+import type { InspectionPlan, InspectionTask, SandboxSnapshot } from '../domain/types';
 import { STARTER_EXAMPLES } from '../examples/examples';
 import type { MissionResult } from '../sim/simulator';
 import { PYTHON_FILES } from './pythonFiles';
@@ -754,6 +754,60 @@ describe('PythonSession (real Pyodide)', () => {
       expect(stdout).toContain("missions ['mission-001', 'mission-002']");
       expect(stdout).toContain('no findings None');
       expect(stdout).toContain("mission 3 mission-003 {'count': 1, 'defectExternalIds': ['defect-m2']}");
+    });
+  });
+
+  describe('with a Ready plan whose task target lies outside the area bounds (live-project case)', () => {
+    let oobSession: PythonSession;
+    let oob: SandboxSnapshot;
+
+    beforeEach(() => oobSession.setSnapshot(oob));
+
+    beforeAll(async () => {
+      // The newest Ready plan: the followup plan's 8 tasks plus one outside the geofence.
+      const followup = snapshot.plans.find((p) => p.externalId === 'demo-plan-followup')!;
+      const plan = { ...followup, externalId: 'oob-ready', name: 'OOB plan', createdTime: followup.createdTime + 1 };
+      const tasks = snapshot.tasks
+        .filter((t) => t.planExternalId === 'demo-plan-followup')
+        .map((t) => ({ ...t, externalId: t.externalId.replace('demo-plan-followup', 'oob-ready'), planExternalId: 'oob-ready' }));
+      const outside: InspectionTask = {
+        ...tasks[0],
+        externalId: 'oob-task',
+        kind: 'region',
+        inspectionType: 'visual',
+        targetElement: null,
+        position3d: [20, 0, 1],
+        normalVector: [0, 0, 1],
+        radiusM: 0.3,
+      };
+      oob = { ...snapshot, plans: [...snapshot.plans, plan], tasks: [...snapshot.tasks, ...tasks, outside] };
+      const indexURL = fileURLToPath(new URL('../../node_modules/pyodide/', import.meta.url));
+      oobSession = await PythonSession.create({ loadPyodide, indexURL, files: PYTHON_FILES, snapshot: oob });
+    }, 60_000);
+
+    it('should run example 7 to completion: the blocked task is skipped, the mission end still completes', async () => {
+      const { stdout, outcome, missions } = await run(oobSession, example('bridge'));
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('preflight error: oob-task:');
+      expect(stdout).toContain('outside the area bounds');
+      expect(stdout).toContain('skipped by pre-flight: Task oob-task cannot be inspected');
+      expect(stdout).toContain('upload_status: idle -> exporting_mesh -> uploading -> complete');
+      expect(stdout).toContain('defects: 2 created: defect-corr-001, defect-crack-002');
+      const mission = missions.at(-1);
+      expect(mission).toMatchObject({ status: 'landed', planExternalId: 'oob-ready', summary: { visited: 8 } });
+      expect(mission?.tasks.find((t) => t.id === 'oob-task')).toMatchObject({ status: 'skipped' });
+    });
+
+    it('should run example 4 to completion with the blocked task skipped', async () => {
+      const { stdout, outcome, missions } = await run(oobSession, example('hand-fly'));
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('preflight error: oob-task:');
+      expect(stdout).toContain('skipped by pre-flight: Task oob-task cannot be inspected');
+      const mission = missions.at(-1);
+      expect(mission).toMatchObject({ status: 'landed', planExternalId: 'oob-ready', summary: { visited: 8 } });
+      expect(mission?.tasks.find((t) => t.id === 'oob-task')).toMatchObject({ status: 'skipped' });
     });
   });
 

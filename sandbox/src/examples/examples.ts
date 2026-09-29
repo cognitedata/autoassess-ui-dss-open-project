@@ -157,13 +157,13 @@ for issue in issues:
 
 print("takeoff", sim_drone.takeoff(height_m=1.0))
 for task in plan["tasks"]:              # plan order; the robot may choose any order
-    if task["id"] in blocked:
-        continue
-    # Hover point facing the surface (element tasks: on the line from where the drone is now).
-    pose = pose_for_task(task, standoff_m=0.8, approach_from=sim_drone.pose)
     try:
-        print("goto", sim_drone.goto(pose))
-        sim_drone.inspect(task["id"])            # 3 s visual, 8 s ndt_thickness
+        if task["id"] not in blocked:
+            # Hover point facing the surface (element tasks: on the line from where the drone is now).
+            print("goto", sim_drone.goto(pose_for_task(task, standoff_m=0.8, approach_from=sim_drone.pose)))
+        sim_drone.inspect(task["id"])            # 3 s visual, 8 s ndt_thickness; blocked -> ValueError
+    except ValueError as err:                    # pre-flight error: the task is recorded as skipped
+        print(f"  skipped by pre-flight: {err}")
     except BatteryLowError as err:
         print("battery low:", err)
         break
@@ -325,7 +325,7 @@ ground station this exact flow is rospy against the real node:
 import json
 from pathlib import Path
 
-from dss_sandbox import SimDrone, pose_for_task
+from dss_sandbox import BatteryLowError, SimDrone, pose_for_task
 from dss_sandbox.gbplanner import SimGbPlanner, std_msgs
 from uidss import UidssClient
 
@@ -333,7 +333,10 @@ ${PICK_PLAN}
 
 # The sandbox needs the plan loaded; the real bridge follows the newest Ready plan by itself.
 sim_drone = SimDrone(speed_mps=1.0, max_flight_time_s=1800)
-sim_drone.load_plan(plan)
+issues = sim_drone.load_plan(plan)
+for issue in issues:                          # blocked tasks are visible up front
+    print(f"preflight {issue.severity}: {issue.task_id}: {issue.message}")
+blocked = {i.task_id for i in issues if i.severity == "error"}
 sim_gbplanner = SimGbPlanner(sim_drone, verbose=False)
 ros = sim_gbplanner.ros
 
@@ -349,10 +352,18 @@ print(f"bridge plan: {bridge_plan['name']} — {len(bridge_plan['tasks'])} tasks
       f"{len(targets[-1].poses)} inspection target poses, upload {statuses[-1]['state']}")
 
 # 2. Fly the plan (your drone driver; examples 5 and 6 let the simulated gbplanner fly instead).
+#    Tasks blocked by pre-flight (e.g. outside the geofence) are skipped, as the real robot would.
 sim_drone.takeoff()
 for task in bridge_plan["tasks"]:
-    sim_drone.goto(pose_for_task(task, standoff_m=0.8, approach_from=sim_drone.pose))
-    sim_drone.inspect(task["id"])
+    try:
+        if task["id"] not in blocked:
+            sim_drone.goto(pose_for_task(task, standoff_m=0.8, approach_from=sim_drone.pose))
+        sim_drone.inspect(task["id"])            # a blocked task raises: recorded as skipped
+    except ValueError as err:
+        print(f"  skipped by pre-flight: {err}")
+    except BatteryLowError as err:
+        print(f"  battery low, turning back: {err}")
+        break
 
 # 3. Report findings like a detection stack: JSON on /autoassess/findings, one object or an
 #    array. x, y, z are required; bad entries are skipped and logged, exactly as on the robot.
