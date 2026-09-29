@@ -66,6 +66,38 @@ class TestParseCsvRows:
         rows = _parse_csv_rows(UTM_CSV)
         assert len(rows) == 53
 
+    # D6.2 / TUM contract (confirmed 2026-09-29): timestamp is epoch SECONDS,
+    # thickness is MILLIMETRES. Older exports used nanoseconds and metres;
+    # both must keep parsing correctly.
+
+    def test_tum_contract_seconds_and_mm(self, tmp_path: Path) -> None:
+        # Arrange: a row exactly as ut_global_registered.csv writes it
+        csv_path = tmp_path / "tum.csv"
+        csv_path.write_text("timestamp,thickness,x,y,z\n1762179077.256366,8.1,1.0,2.0,3.0\n")
+        # Act
+        rows = _parse_csv_rows(csv_path)
+        # Assert: 1762179077 s = 2025-11-03, thickness already mm
+        assert rows[0].timestamp.startswith("2025-11-03")
+        assert rows[0].thickness_mm == pytest.approx(8.1)
+
+    def test_legacy_nanoseconds_and_metres(self, tmp_path: Path) -> None:
+        csv_path = tmp_path / "legacy.csv"
+        csv_path.write_text("timestamp,thickness,x,y,z\n1758798236657801216,0.008,1.0,2.0,3.0\n")
+        rows = _parse_csv_rows(csv_path)
+        assert rows[0].timestamp.startswith("2025-09-25")
+        assert rows[0].thickness_mm == pytest.approx(8.0)
+
+    def test_millisecond_and_microsecond_timestamps(self, tmp_path: Path) -> None:
+        csv_path = tmp_path / "msus.csv"
+        csv_path.write_text(
+            "timestamp,thickness,x,y,z\n"
+            "1762179077256.366,8.1,1.0,2.0,3.0\n"
+            "1762179077256366.0,8.1,1.0,2.0,3.0\n"
+        )
+        rows = _parse_csv_rows(csv_path)
+        assert rows[0].timestamp.startswith("2025-11-03")
+        assert rows[1].timestamp.startswith("2025-11-03")
+
     def test_timestamp_is_iso8601_utc(self) -> None:
         rows = _parse_csv_rows(UTM_CSV)
         ts = rows[0].timestamp
