@@ -44,7 +44,7 @@ log = structlog.get_logger()
 
 _List = list  # avoid shadowing by method named `list`
 _CHUNK_SIZE = 1000
-_VALID_STATUSES: frozenset[str] = frozenset({"Draft", "Ready", "Complete"})
+_VALID_STATUSES: frozenset[str] = frozenset({"Draft", "Ready", "Active", "Complete"})
 _VALID_ELEMENT_TYPES: frozenset[str] = frozenset({"manhole", "longitudinal", "wall", "compartment"})
 _VALID_INSPECTION_TYPES: frozenset[str] = frozenset({"visual", "ndt_thickness"})
 _VALID_TASK_KINDS: frozenset[str] = frozenset({"element", "region"})

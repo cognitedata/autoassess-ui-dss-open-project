@@ -83,6 +83,22 @@ class TestList:
             created_time=1000,
         )
 
+    def test_keeps_active_status(self) -> None:
+        # Active is the viewer's explicit "robot flies this" flag — it must not
+        # be coerced to Draft like unknown statuses are.
+        node = _make_node(
+            SPACE,
+            "plan-002",
+            INSPECTION_PLAN_VIEW,
+            {
+                "area": {"space": SPACE, "externalId": "area-001"},
+                "status": "Active",
+            },
+            created_time=1000,
+        )
+        service = CdfPlanService(_make_client([node]))
+        assert service.list(SPACE, "area-001")[0].status == "Active"
+
     def test_maps_name_and_description_when_present(self) -> None:
         node = _make_node(
             SPACE,

@@ -7,7 +7,7 @@ import {
   getViewKey,
 } from '../../shared/cdf/dataModel';
 
-export type PlanStatus = 'Draft' | 'Ready' | 'Complete';
+export type PlanStatus = 'Draft' | 'Ready' | 'Active' | 'Complete';
 
 export interface InspectionPlan {
   space: string;
@@ -18,6 +18,8 @@ export interface InspectionPlan {
   status: PlanStatus;
   /** Unix epoch milliseconds — from DMS node metadata, not a custom property. */
   createdTime: number;
+  /** Unix epoch milliseconds — from DMS node metadata, not a custom property. */
+  lastUpdatedTime: number;
   name: string | null;
   description: string | null;
 }
@@ -118,6 +120,7 @@ export class CdfInspectionPlanService implements InspectionPlanService {
       mapExternalId: input.mapExternalId,
       status: 'Draft',
       createdTime: node.createdTime,
+      lastUpdatedTime: node.lastUpdatedTime,
       name: name ?? null,
       description: description ?? null,
     };
@@ -188,7 +191,7 @@ function isNode(item: NodeDefinition | { instanceType: string }): item is NodeDe
   return item.instanceType === 'node';
 }
 
-const VALID_STATUSES = new Set<string>(['Draft', 'Ready', 'Complete']);
+const VALID_STATUSES = new Set<string>(['Draft', 'Ready', 'Active', 'Complete']);
 
 function mapNodeToInspectionPlan(item: NodeDefinition): InspectionPlan {
   const props =
@@ -209,6 +212,7 @@ function mapNodeToInspectionPlan(item: NodeDefinition): InspectionPlan {
     mapExternalId: mapRef?.externalId ?? null,
     status,
     createdTime: item.createdTime ?? 0,
+    lastUpdatedTime: item.lastUpdatedTime ?? 0,
     name,
     description,
   };

@@ -37,6 +37,9 @@ export function InspectionPlansPanel({
     isCreatingPlan,
     selectPlan,
     deactivatePlan,
+    robotPlanExternalId,
+    setPlanActive,
+    setPlanInactive,
     togglePlanStatus,
     isTogglingStatus,
     updatePlan,
@@ -90,6 +93,10 @@ export function InspectionPlansPanel({
       createPlan={createPlan}
       isCreatingPlan={isCreatingPlan}
       onSelectPlan={selectPlan}
+      robotPlanExternalId={robotPlanExternalId}
+      onSetPlanActive={setPlanActive}
+      onSetPlanInactive={setPlanInactive}
+      isTogglingStatus={isTogglingStatus}
     />
   );
 }
@@ -104,6 +111,10 @@ interface PlanListViewProps {
   createPlan(input: Parameters<InspectionPlansViewModel['createPlan']>[0]): void;
   isCreatingPlan: boolean;
   onSelectPlan(plan: InspectionPlan): void;
+  robotPlanExternalId: string | null;
+  onSetPlanActive(plan: InspectionPlan): void;
+  onSetPlanInactive(plan: InspectionPlan): void;
+  isTogglingStatus: boolean;
 }
 
 function PlanListView({
@@ -114,6 +125,10 @@ function PlanListView({
   createPlan,
   isCreatingPlan,
   onSelectPlan,
+  robotPlanExternalId,
+  onSetPlanActive,
+  onSetPlanInactive,
+  isTogglingStatus,
 }: PlanListViewProps) {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 
@@ -159,7 +174,15 @@ function PlanListView({
       ) : (
         <ul className="flex flex-col gap-2" aria-label="Inspection plans">
           {plans.map((plan) => (
-            <PlanRow key={plan.externalId} plan={plan} onSelect={onSelectPlan} />
+            <PlanRow
+              key={plan.externalId}
+              plan={plan}
+              onSelect={onSelectPlan}
+              isRobotPlan={plan.externalId === robotPlanExternalId}
+              onSetActive={onSetPlanActive}
+              onSetInactive={onSetPlanInactive}
+              isTogglingStatus={isTogglingStatus}
+            />
           ))}
         </ul>
       )}
@@ -167,22 +190,68 @@ function PlanListView({
   );
 }
 
-function PlanRow({ plan, onSelect }: { plan: InspectionPlan; onSelect(p: InspectionPlan): void }) {
+const ROBOT_RULE_TOOLTIP =
+  'The robot bridge flies this plan: the Active plan if one exists, otherwise the most recently updated Ready plan.';
+
+function PlanRow({
+  plan,
+  onSelect,
+  isRobotPlan,
+  onSetActive,
+  onSetInactive,
+  isTogglingStatus,
+}: {
+  plan: InspectionPlan;
+  onSelect(p: InspectionPlan): void;
+  isRobotPlan: boolean;
+  onSetActive(p: InspectionPlan): void;
+  onSetInactive(p: InspectionPlan): void;
+  isTogglingStatus: boolean;
+}) {
   const label = formatPlanLabel(plan);
   return (
-    <li className="flex items-center justify-between rounded-md border border-border px-3 py-2">
-      <div className="flex items-center gap-2">
-        <span className="text-sm">{label}</span>
+    <li className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="truncate text-sm">{label}</span>
         <PlanStatusBadge status={plan.status} />
+        {isRobotPlan && (
+          <Badge variant="sky" outline title={ROBOT_RULE_TOOLTIP} aria-label="Will be sent to robot">
+            → robot
+          </Badge>
+        )}
       </div>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => onSelect(plan)}
-        aria-label={`Select plan ${label}`}
-      >
-        Select
-      </Button>
+      <div className="flex shrink-0 items-center gap-1">
+        {plan.status === 'Ready' && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onSetActive(plan)}
+            disabled={isTogglingStatus}
+            aria-label={`Set plan ${label} active`}
+          >
+            Set active
+          </Button>
+        )}
+        {plan.status === 'Active' && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => onSetInactive(plan)}
+            disabled={isTogglingStatus}
+            aria-label={`Deactivate plan ${label}`}
+          >
+            Deactivate
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => onSelect(plan)}
+          aria-label={`Select plan ${label}`}
+        >
+          Select
+        </Button>
+      </div>
     </li>
   );
 }
@@ -466,7 +535,9 @@ function PlanStatusBadge({ status }: { status: InspectionPlan['status'] }) {
       ? 'secondary'
       : status === 'Ready'
         ? 'default'
-        : 'archived';
+        : status === 'Active'
+          ? 'success'
+          : 'archived';
   return <Badge variant={variant}>{status}</Badge>;
 }
 

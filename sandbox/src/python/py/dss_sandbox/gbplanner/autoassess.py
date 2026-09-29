@@ -1,7 +1,7 @@
 """Simulated autoassess_bridge: the ROS node that connects gbplanner to AutoAssess (CDF).
 
-The real node (`autoassess_bridge`, ROS 1) follows the newest Ready plan in CDF and publishes it
-latched (`/autoassess/plan`, `/autoassess/plan_id`, `/autoassess/inspection_targets`), buffers
+The real node (`autoassess_bridge`, ROS 1) follows the area's Active plan in CDF — or, when no
+plan is Active, the newest Ready plan — and publishes it latched (`/autoassess/plan`, `/autoassess/plan_id`, `/autoassess/inspection_targets`), buffers
 findings your detection stack publishes on `/autoassess/findings`, and at mission end uploads
 the mission and reports progress on `/autoassess/upload_status`.
 
@@ -219,7 +219,7 @@ class SimAutoassessBridge:
             return [String(data=json.dumps(self._status or self._status_message("idle")))]
         plan = self._drone.plan
         if plan is None:
-            return []  # like the real node before it has found a Ready plan
+            return []  # like the real node before it has found an Active or Ready plan
         if topic == PLAN_TOPIC:
             return [String(data=json.dumps(plan))]
         if topic == PLAN_ID_TOPIC:

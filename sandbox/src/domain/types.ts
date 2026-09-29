@@ -4,7 +4,7 @@
  */
 export type Vec3 = [number, number, number];
 
-export type PlanStatus = 'Draft' | 'Ready' | 'Complete';
+export type PlanStatus = 'Draft' | 'Ready' | 'Active' | 'Complete';
 export type TaskKind = 'element' | 'region';
 export type InspectionType = 'visual' | 'ndt_thickness';
 export type ElementType = 'manhole' | 'longitudinal' | 'wall' | 'compartment';

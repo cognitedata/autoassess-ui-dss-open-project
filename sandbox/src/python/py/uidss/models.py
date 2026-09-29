@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-PlanStatus = Literal["Draft", "Ready", "Complete"]
+PlanStatus = Literal["Draft", "Ready", "Active", "Complete"]
 ElementType = Literal["manhole", "longitudinal", "wall", "compartment"]
 InspectionType = Literal["visual", "ndt_thickness"]
 TaskKind = Literal["element", "region"]

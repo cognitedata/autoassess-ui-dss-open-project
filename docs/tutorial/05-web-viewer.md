@@ -46,6 +46,10 @@ In the viewer, try:
 6. **Edit a campaign**: in the Layers tab, open a campaign's **⋮** menu → **Edit campaign** (see below).
 7. **Suggestions** (on a Draft plan): recommended follow-up tasks from [`src/features/recommendations/recommendationRules.ts`](../../src/features/recommendations/recommendationRules.ts) (for example, NDT readings < 10 mm and Confirmed defects).
 
+### Which plan does the robot fly?
+
+The robot bridge follows one plan per area: the **Active** plan if there is one, otherwise the most recently updated **Ready** plan. In the Plans tab, **Set active** on a Ready plan promotes it to Active — any other Active plan in the area drops back to Ready in the same flow, so at most one plan is Active — and **Deactivate** demotes it to Ready again. The plan the bridge would pick right now carries a **→ robot** chip in the plan list, so you can always see what the next mission will fly.
+
 ### Editing campaigns
 
 A campaign is only a date plus lists of file ids, so you can change it after the upload:

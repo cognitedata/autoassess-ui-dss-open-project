@@ -42,6 +42,9 @@ function makeViewModel(overrides: Partial<InspectionPlansViewModel> = {}): Inspe
     isCreatingPlan: false,
     selectPlan: vi.fn(),
     deactivatePlan: vi.fn(),
+    robotPlanExternalId: null,
+    setPlanActive: vi.fn(),
+    setPlanInactive: vi.fn(),
     togglePlanStatus: vi.fn(),
     isTogglingStatus: false,
     updatePlan: vi.fn(),
@@ -159,6 +162,50 @@ describe(InspectionPlansPanel.name, () => {
       const plan = createMockInspectionPlan({ status: 'Draft' });
       renderPanel(makeViewModel({ plans: [plan] }));
       expect(screen.getByText('Draft')).toBeDefined();
+    });
+
+    it('shows an Active badge on the Active plan', () => {
+      const plan = createMockInspectionPlan({ status: 'Active' });
+      renderPanel(makeViewModel({ plans: [plan] }));
+      expect(screen.getByText('Active')).toBeDefined();
+    });
+
+    it('shows a Set active action on Ready plans and calls setPlanActive with the plan', async () => {
+      const setPlanActive = vi.fn();
+      const plan = createMockInspectionPlan({ status: 'Ready' });
+      renderPanel(makeViewModel({ plans: [plan], setPlanActive }));
+      await userEvent.click(screen.getByRole('button', { name: /set plan .* active/i }));
+      expect(setPlanActive).toHaveBeenCalledWith(plan);
+    });
+
+    it('shows a Deactivate action on the Active plan and calls setPlanInactive with the plan', async () => {
+      const setPlanInactive = vi.fn();
+      const plan = createMockInspectionPlan({ status: 'Active' });
+      renderPanel(makeViewModel({ plans: [plan], setPlanInactive }));
+      await userEvent.click(screen.getByRole('button', { name: /deactivate plan/i }));
+      expect(setPlanInactive).toHaveBeenCalledWith(plan);
+    });
+
+    it('does not show a Set active or Deactivate action on Draft or Complete plans', () => {
+      const draft = createMockInspectionPlan({ externalId: 'plan-1', status: 'Draft' });
+      const complete = createMockInspectionPlan({ externalId: 'plan-2', status: 'Complete' });
+      renderPanel(makeViewModel({ plans: [draft, complete] }));
+      expect(screen.queryByRole('button', { name: /set plan .* active/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /deactivate plan/i })).toBeNull();
+    });
+
+    it('marks exactly the robot plan with a "robot" chip explaining the rule', () => {
+      const active = createMockInspectionPlan({ externalId: 'plan-active', name: 'Active plan', status: 'Active' });
+      const ready = createMockInspectionPlan({ externalId: 'plan-ready', name: 'Ready plan', status: 'Ready' });
+      renderPanel(makeViewModel({ plans: [active, ready], robotPlanExternalId: 'plan-active' }));
+      expect(screen.getAllByText(/robot/i)).toHaveLength(1);
+      expect(screen.getByText(/robot/i).closest('li')?.textContent).toContain('Active plan');
+    });
+
+    it('shows no robot chip when robotPlanExternalId is null', () => {
+      const draft = createMockInspectionPlan({ status: 'Draft' });
+      renderPanel(makeViewModel({ plans: [draft], robotPlanExternalId: null }));
+      expect(screen.queryByText(/robot/i)).toBeNull();
     });
   });
 

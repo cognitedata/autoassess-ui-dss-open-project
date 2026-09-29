@@ -8,6 +8,7 @@ export function createMockInspectionPlan(overrides: Partial<InspectionPlan> = {}
     mapExternalId: 'result-legacy-area-01581',
     status: 'Draft',
     createdTime: 1700000000000,
+    lastUpdatedTime: 1700000000000,
     name: null,
     description: null,
     ...overrides,

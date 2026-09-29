@@ -153,7 +153,7 @@ function mapArea({ space, externalId, p }: Props): Omit<Area, 'bounds'> {
   };
 }
 
-const PLAN_STATUSES = new Set<string>(['Draft', 'Ready', 'Complete']);
+const PLAN_STATUSES = new Set<string>(['Draft', 'Ready', 'Active', 'Complete']);
 const TASK_KINDS = new Set<string>(['element', 'region']);
 const INSPECTION_TYPES = new Set<string>(['visual', 'ndt_thickness']);
 const ELEMENT_TYPES = new Set<string>(['manhole', 'longitudinal', 'wall', 'compartment']);
