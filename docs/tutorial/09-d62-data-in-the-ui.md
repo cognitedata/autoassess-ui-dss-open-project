@@ -15,15 +15,18 @@ Everything meets in the CDF data model; each interface below is a client of that
 | **Drone Sandbox** (Flows app, `sandbox/`) | partners without ROS | Browser twin of the SDK and the bridge topics, with a simulated drone and planner | `sandbox/README.md` |
 | **File contracts** | robot ⇄ ground station | `plan.json`, NDT CSV, PLY/PCD, TUM image datasets, `mesh_legend.json` | this chapter + [Chapter 4](04-ground-station-sdk.md) |
 
-The bridge's ROS surface (from its README):
+The bridge's ROS surface uses typed messages (`rosmsg show autoassess_bridge/…` documents every field; the bridge README has the per-field tables):
 
 | Topic / service | Type | Meaning |
 | --- | --- | --- |
-| `/autoassess/plan` | `std_msgs/String` | the plan JSON — the same text `dss plan download` writes to `plan.json` |
+| `/autoassess/plan` | `autoassess_bridge/InspectionPlan` (latched) | the plan: ids, name, area/map, `InspectionTask[]` with typed task/inspection kinds, position, normal, radius |
+| `/autoassess/plan_json` | `std_msgs/String` (latched) | the verbatim `plan.json` text for consumers wanting full fidelity |
 | `/autoassess/inspection_targets` | `geometry_msgs/PoseArray` | one inspection pose per task, in task order |
 | `/autoassess/plan_id` | `std_msgs/String` | the plan's externalId |
-| `/autoassess/findings` | `std_msgs/String` (in) | detection stack reports findings as JSON; stored as defects on the mission's campaign |
-| `/autoassess/upload_status` | `std_msgs/String` (latched, out) | mission upload progress as JSON |
+| `/autoassess/findings` | `autoassess_bridge/Finding` (in) | one finding per message; stored as defects on the mission's campaign |
+| `/autoassess/findings_json` | `std_msgs/String` (in) | the JSON findings interface, kept for the sandbox twin and scripts |
+| `/autoassess/upload_status` | `autoassess_bridge/UploadStatus` (latched, out) | upload state machine (IDLE/EXPORTING_MESH/UPLOADING/COMPLETE/FAILED), counts, defect ids |
+| `/autoassess/upload_status_json` | `std_msgs/String` (latched, out) | full JSON mirror with per-file details |
 | `~upload_mission`, `~submit_findings` | `std_srvs/Trigger` | manual upload / findings retry |
 
 `autoassess_full.launch` also starts a `dss worker`, so mission meshes get their 3D models built automatically.
