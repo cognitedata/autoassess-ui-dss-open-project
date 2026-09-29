@@ -23,6 +23,7 @@ from uidss.cdf.data_model import (
 )
 from uidss.models import DroneImage
 from uidss.services.cognite_file import CogniteFileSpec, upload_cognite_files
+from uidss.threed.png import read_png_size
 
 log = structlog.get_logger()
 
@@ -74,6 +75,76 @@ def parse_sensor_yaml(yaml_path: Path) -> SensorConfig:
         near_plane=scalar("near_plane"),
         far_plane=scalar("far_plane"),
         t_bs=t_bs,
+    )
+
+
+# Defaults used when the dataset provides no near/far planes (intrinsics.txt).
+# These match the supereight2 ship_CH sensor.yaml and the values the web
+# viewer already assumes for DroneImage nodes that lack them (see _map_node).
+_DEFAULT_NEAR_PLANE = 0.4
+_DEFAULT_FAR_PLANE = 35.0
+
+# fmt: off
+_IDENTITY_T_BS: list[float] = [
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+]
+# fmt: on
+
+# Loose tolerance for the fixed entries of a K matrix (0s and the trailing 1).
+_K_TOLERANCE = 1e-3
+
+
+def parse_intrinsics_txt(path: Path, image_size: tuple[int, int]) -> SensorConfig:
+    """Parse a bare 3x3 camera matrix file (TUM ``intrinsics.txt``) into a SensorConfig.
+
+    The file holds three whitespace-separated rows of the pinhole K matrix::
+
+        fx   0   cx
+        0    fy  cy
+        0    0   1
+
+    Any amount of whitespace between values and blank lines are tolerated.
+    The fixed entries (the off-diagonal zeros, the bottom row ``0 0 1``) are
+    validated loosely (within 1e-3) and fx/fy must be positive.
+
+    The file carries no extrinsics, so T_BS is the identity — poses in
+    groundtruth.txt are assumed to already be camera-frame.  ``image_size``
+    is ``(width, height)`` taken from the dataset's images.  Near/far planes
+    default to 0.4 m / 35.0 m, the supereight2 ship_CH values that the web
+    viewer also assumes for nodes missing them.
+    """
+    rows = [line.split() for line in path.read_text().splitlines() if line.strip()]
+    if len(rows) != 3 or any(len(row) != 3 for row in rows):
+        raise ValueError(f"{path} must contain a 3x3 matrix (3 rows of 3 values)")
+    try:
+        k = [[float(v) for v in row] for row in rows]
+    except ValueError as exc:
+        raise ValueError(f"{path} contains a non-numeric value: {exc}") from exc
+
+    fixed = {(0, 1): 0.0, (1, 0): 0.0, (2, 0): 0.0, (2, 1): 0.0, (2, 2): 1.0}
+    for (i, j), expected in fixed.items():
+        if abs(k[i][j] - expected) > _K_TOLERANCE:
+            raise ValueError(
+                f"{path} is not a camera matrix: K[{i}][{j}]={k[i][j]}, expected {expected}"
+            )
+    fx, fy, cx, cy = k[0][0], k[1][1], k[0][2], k[1][2]
+    if fx <= 0 or fy <= 0:
+        raise ValueError(f"{path} has non-positive focal lengths: fx={fx}, fy={fy}")
+
+    width, height = image_size
+    return SensorConfig(
+        fx=fx,
+        fy=fy,
+        cx=cx,
+        cy=cy,
+        width=width,
+        height=height,
+        near_plane=_DEFAULT_NEAR_PLANE,
+        far_plane=_DEFAULT_FAR_PLANE,
+        t_bs=list(_IDENTITY_T_BS),
     )
 
 
@@ -317,13 +388,14 @@ class CdfDroneImageService:
 
         folder must contain rgb.txt, groundtruth.txt, rgb/ subdirectory,
         and optionally a sensor YAML.  If sensor_yaml is None the service
-        looks for <folder>/../<stem>_test.yaml or <folder>/sensor.yaml.
+        looks for <folder>/sensor.yaml or <folder>/../<stem>_test.yaml,
+        and finally falls back to <folder>/intrinsics.txt (bare 3x3 K
+        matrix, identity extrinsics, image size read from the first PNG).
         """
         rgb_entries = _parse_rgb_txt(folder / "rgb.txt")
         poses = _parse_groundtruth(folder / "groundtruth.txt")
 
-        yaml_path = _resolve_sensor_yaml(folder, sensor_yaml)
-        sensor = parse_sensor_yaml(yaml_path)
+        sensor = _resolve_sensor_config(folder, sensor_yaml, rgb_entries)
 
         file_specs = [
             CogniteFileSpec(
@@ -418,15 +490,33 @@ class CdfDroneImageService:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_sensor_yaml(folder: Path, hint: Path | None) -> Path:
+def _resolve_sensor_config(
+    folder: Path, hint: Path | None, rgb_entries: list[_RgbEntry]
+) -> SensorConfig:
+    """Resolve the sensor config: explicit YAML > YAML lookups > intrinsics.txt."""
     if hint is not None:
-        return hint
+        return parse_sensor_yaml(hint)
     for candidate in (folder / "sensor.yaml", folder.parent / f"{folder.name}_test.yaml"):
         if candidate.exists():
-            return candidate
+            return parse_sensor_yaml(candidate)
+
+    intrinsics = folder / "intrinsics.txt"
+    if intrinsics.exists():
+        if not rgb_entries:
+            raise ValueError(f"Cannot determine image size for {intrinsics}: rgb.txt is empty")
+        first_image = folder / "rgb" / Path(rgb_entries[0].filename).name
+        image_size = read_png_size(first_image)
+        log.warning(
+            "no sensor YAML found — using intrinsics.txt with identity extrinsics "
+            "(groundtruth poses are assumed to be camera-frame)",
+            intrinsics=str(intrinsics),
+            image_size=image_size,
+        )
+        return parse_intrinsics_txt(intrinsics, image_size)
+
     raise FileNotFoundError(
-        f"No sensor YAML found for {folder}. "
-        "Pass sensor_yaml= explicitly or place sensor.yaml inside the folder."
+        f"No sensor YAML or intrinsics.txt found for {folder}. "
+        "Pass sensor_yaml= explicitly or place sensor.yaml or intrinsics.txt inside the folder."
     )
 
 

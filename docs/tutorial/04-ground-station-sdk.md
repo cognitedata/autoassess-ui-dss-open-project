@@ -201,7 +201,8 @@ tum/
 ├── rgb.txt           # 3 header lines, then "<timestamp> rgb/frame_0001.png"
 ├── groundtruth.txt   # "#" comments, then "<timestamp> tx ty tz qx qy qz qw"  (body/IMU pose in map frame)
 ├── rgb/*.png
-└── sensor.yaml       # optional here if passed with -s (also looks for ../<folder>_test.yaml)
+├── sensor.yaml       # optional here if passed with -s (also looks for ../<folder>_test.yaml)
+└── intrinsics.txt    # fallback when no sensor YAML exists: bare 3x3 camera matrix
 ```
 
 `sensor.yaml` uses the supereight2 format:
@@ -220,6 +221,14 @@ sensor:
           0,-1, 0,-0.0373,
           0, 0, 0, 1]
 ```
+If no sensor YAML is found (neither passed with `-s`, nor `sensor.yaml` in the folder, nor `../<folder>_test.yaml`), the importer accepts an `intrinsics.txt` in the folder instead — the format shipped by the D6.2 `ship_CH_data` dataset — holding a bare 3x3 camera matrix:
+```
+390.598938   0   320.0
+0   390.598938   240.0
+0   0   1
+```
+With `intrinsics.txt` there are no extrinsics, so `T_BS` is the identity — the `groundtruth.txt` poses are assumed to already be camera-frame (a warning is logged). Image width/height are read from the first PNG in `rgb/`, and near/far planes default to 0.4 m / 35.0 m (the ship_CH supereight2 values).
+
 The pose at each image's timestamp is interpolated from `groundtruth.txt` (lerp for position, slerp for rotation). The camera pose is `T_WS = T_WB · T_BS`. Each image becomes a PNG `CogniteFile` (external ID `drone-image-file-{campaign}-frame-{n}`) plus a `DroneImage` node.
 
 ### 1.6 Create a plan from findings (CSV)
