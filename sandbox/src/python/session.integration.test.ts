@@ -615,7 +615,9 @@ describe('PythonSession (real Pyodide)', () => {
       expect(mission?.planner?.viewpoints.length).toBeGreaterThan(0);
       expect(Object.keys(mission?.planner?.coveredTasks ?? {})).toHaveLength(covered);
       expect(mission?.planner?.progress.at(-1)).toMatchObject({ compartments: 5 });
-      expect(elapsedMs).toBeLessThan(7_000);
+      // CI runners are slower than dev machines; keep the strict budget locally
+      // while staying well inside the 30s test timeout on CI.
+      expect(elapsedMs).toBeLessThan(process.env.CI ? 20_000 : 7_000);
     });
 
     it('should run example 6 (target reach per task) and inspect the tasks', async () => {
