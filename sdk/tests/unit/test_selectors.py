@@ -15,6 +15,7 @@ from uidss.cli.selectors import (
     ask_pcd_label,
     confirm,
     pick_area,
+    pick_map_campaign,
     pick_or_create_campaign,
     pick_plan,
     pick_plan_to_complete,
@@ -186,6 +187,38 @@ class TestPickOrCreateCampaign:
             mock_select.return_value.unsafe_ask.return_value = r
             result = pick_or_create_campaign([r])
         assert result is r
+
+
+class TestPickMapCampaign:
+    def test_exits_with_error_when_no_complete_campaign(self) -> None:
+        with pytest.raises(typer.Exit):
+            pick_map_campaign([_result("result-1", "InProgress")], interactive=True)
+
+    def test_returns_the_only_complete_campaign_without_prompt(self) -> None:
+        done = _result("result-2", "Complete")
+        with patch("uidss.cli.selectors.questionary.select") as mock_select:
+            result = pick_map_campaign([_result("result-1", "InProgress"), done], interactive=True)
+        assert result is done
+        mock_select.assert_not_called()
+
+    def test_non_interactive_returns_the_newest_complete_campaign(self) -> None:
+        newest = _result("result-new", "Complete", "2026-09-26")
+        older = _result("result-old", "Complete", "2026-09-01")
+        with patch("uidss.cli.selectors.questionary.select") as mock_select:
+            result = pick_map_campaign([newest, older], interactive=False)
+        assert result is newest
+        mock_select.assert_not_called()
+
+    def test_interactive_prompts_among_complete_campaigns(self) -> None:
+        newest = _result("result-new", "Complete", "2026-09-26")
+        older = _result("result-old", "Complete", "2026-09-01")
+        running = _result("result-run", "InProgress", "2026-09-27")
+        with patch("uidss.cli.selectors.questionary.select") as mock_select:
+            mock_select.return_value.unsafe_ask.return_value = older
+            result = pick_map_campaign([running, newest, older], interactive=True)
+        assert result is older
+        choices = mock_select.call_args.kwargs["choices"]
+        assert [c.value for c in choices] == [newest, older]
 
 
 # ---------------------------------------------------------------------------

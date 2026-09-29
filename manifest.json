@@ -3,8 +3,20 @@
   "permissions": {
     "network": [
       {
-        "sources": ["https://westeurope-1.cognitedata.com"],
-        "directives": ["img-src"]
+        "sources": [
+          "https://westeurope-1.cognitedata.com"
+        ],
+        "directives": [
+          "img-src"
+        ]
+      },
+      {
+        "sources": [
+          "'wasm-unsafe-eval'"
+        ],
+        "directives": [
+          "script-src"
+        ]
       }
     ]
   }

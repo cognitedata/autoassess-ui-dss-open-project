@@ -14,6 +14,7 @@ ElementType = Literal["manhole", "longitudinal", "wall", "compartment"]
 InspectionType = Literal["visual", "ndt_thickness"]
 TaskKind = Literal["element", "region"]
 MetricUnit = Literal["decimal", "percentage"]
+Vec3 = tuple[float, float, float]
 
 
 @dataclass(frozen=True)
@@ -67,6 +68,19 @@ class InspectionTask:
     position3d: tuple[float, float, float] | None = None
     normal_vector: tuple[float, float, float] | None = None
     radius_m: float | None = None
+    # Stable id of the recommendation / finding that generated this task, if any.
+    suggestion_id: str | None = None
+
+
+@dataclass(frozen=True)
+class NewRegionTask:
+    """A region task to be written to a plan (mirrors the web app's `NewRegionTask`)."""
+
+    position3d: Vec3
+    normal_vector: Vec3
+    radius_m: float
+    inspection_type: InspectionType = "visual"
+    suggestion_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -79,6 +93,21 @@ class InspectionResult:
     cdf_file_ids: tuple[int, ...] = field(default_factory=tuple)
     pcd_file_ids: tuple[int, ...] = field(default_factory=tuple)
     pcd_file_labels: tuple[str, ...] = field(default_factory=tuple)
+
+
+@dataclass(frozen=True)
+class MeshFile:
+    """An uploaded mesh: a CogniteFile tagged ``ply_mesh``.
+
+    Each one gets its own CDF 3D model, keyed by ``external_id`` (see ``threed_service``);
+    campaigns reference it by the numeric ``file_id`` in ``cdfFileIds``.
+    """
+
+    file_id: int
+    external_id: str
+    name: str
+    area_external_id: str | None = None
+    created_time: int = 0  # Unix epoch milliseconds (of the CogniteFile node)
 
 
 @dataclass(frozen=True)

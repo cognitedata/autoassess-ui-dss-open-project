@@ -1,18 +1,21 @@
-import { render, screen, waitFor, act } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { UseQueryResult } from '@tanstack/react-query';
-import { ViewerPage } from './ViewerPage';
-import { ViewerViewModelContext } from './useViewerViewModel';
-import type { ViewerViewModelContextType } from './useViewerViewModel';
+import { render, screen, waitFor, act } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+
 import { createMockArea } from '../../__mocks__/areas';
+import { createMockDroneImage } from '../../__mocks__/droneImages';
 import { createMockStructuralElement } from '../../__mocks__/structuralElements';
 import { createMockVessel } from '../../__mocks__/vessels';
-import { createMockDroneImage } from '../../__mocks__/droneImages';
+
 import type { PlyViewerProps } from './PlyViewer';
 import type { SelectionHit } from './selection';
+import type { ViewerViewModelContextType } from './useViewerViewModel';
+import { ViewerViewModelContext } from './useViewerViewModel';
+import { ViewerPage } from './ViewerPage';
 
 vi.mock('./usePlyUrls', () => ({
   usePlyUrls: vi.fn(() => ({
@@ -21,6 +24,33 @@ vi.mock('./usePlyUrls', () => ({
     error: null,
   })),
 }));
+
+// vi.mock: useCampaignCadModels runs a React Query hook against CDF; the page tests only
+// need a finished CAD model for the mocked campaign so the viewer renders.
+vi.mock('./reveal/useCampaignCadModels', () => ({
+  useCampaignCadModels: vi.fn((campaigns: { externalId: string }[]) => ({
+    data: campaigns.some((c) => c.externalId === 'test-campaign')
+      ? { models: [makeDoneCadModel('test-campaign')], meshesWithoutModel: [] }
+      : undefined,
+    isSuccess: campaigns.length > 0,
+    isLoading: false,
+    error: null,
+  })),
+}));
+
+function makeDoneCadModel(campaignExternalId: string, status = 'Done') {
+  return {
+    key: `${campaignExternalId}/f1-cad-model`,
+    campaignExternalId,
+    sourceFileId: 42,
+    modelId: 1,
+    revisionId: 2,
+    status,
+    collisionProxyFileId: 42,
+    hasTexture: false,
+    palette: {},
+  };
+}
 
 vi.mock('./useLayerPanelViewModel', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./useLayerPanelViewModel')>();
@@ -86,12 +116,20 @@ vi.mock('./useDroneImages', async (importOriginal) => {
   };
 });
 
+// vi.mock: the edit-campaign view model runs React Query hooks against CDF; the page tests
+// only check that it reaches the right panel.
+vi.mock('./campaigns/useEditCampaignViewModel', () => ({
+  useEditCampaignViewModel: vi.fn(() => ({ isOpen: false, openEdit: vi.fn(), openCreate: vi.fn() })),
+}));
+
 vi.mock('./ViewerRightPanel', () => ({
   ViewerRightPanel: vi.fn(() => <div data-testid="viewer-right-panel" />),
 }));
 
 // Capture the onHitSelected prop so tests can trigger it
 let capturedOnHitSelected: ((hit: SelectionHit | null) => void) | undefined;
+let capturedInitialCameraPose: PlyViewerProps['initialCameraPose'];
+let capturedOnCameraSettled: PlyViewerProps['onCameraSettled'];
 // Capture handle calls so URL-param tests and ray-picking tests can assert on them
 const mockFlyToImage = vi.fn();
 const mockSelectImage = vi.fn();
@@ -107,6 +145,8 @@ vi.mock('./PlyViewer', async () => {
   return {
     PlyViewer: vi.fn((props: PlyViewerProps & { ref?: unknown }) => {
       capturedOnHitSelected = props.onHitSelected;
+      capturedInitialCameraPose = props.initialCameraPose;
+      capturedOnCameraSettled = props.onCameraSettled;
       useLayoutEffect(() => {
         if (typeof props.ref === 'function') {
           const handle = {
@@ -275,7 +315,62 @@ describe(ViewerPage.name, () => {
       onColorModeChange: vi.fn(),
     });
     renderViewerPage(mockDeps);
-    expect(screen.getByText('3D model not yet uploaded')).toBeDefined();
+    expect(screen.getByText('No scan data yet')).toBeDefined();
+    expect(screen.getByText(/autoassess_bridge/)).toBeDefined();
+  });
+
+  it('passes each mesh campaign with its file ids to the CAD model lookup', async () => {
+    const { useCampaignCadModels } = await import('./reveal/useCampaignCadModels');
+
+    renderViewerPage(mockDeps);
+
+    expect(vi.mocked(useCampaignCadModels)).toHaveBeenCalledWith([{ externalId: 'test-campaign', cdfFileIds: [42] }]);
+  });
+
+  it('says the mesh is waiting for a dss worker when it has no CAD model yet', async () => {
+    const { useCampaignCadModels } = await import('./reveal/useCampaignCadModels');
+    vi.mocked(useCampaignCadModels).mockReturnValueOnce(
+      makeSuccessResult({ models: [], meshesWithoutModel: [{ campaignExternalId: 'test-campaign', fileId: 42 }] }),
+    );
+
+    renderViewerPage(mockDeps);
+
+    expect(screen.getByText('3D model not ready yet')).toBeInTheDocument();
+    expect(screen.getByText(/waiting for a/)).toBeInTheDocument();
+    expect(screen.getByText('dss campaign build-3d-model --campaign test-campaign')).toBeInTheDocument();
+    expect(screen.queryByTestId('ply-viewer-container')).toBeNull();
+  });
+
+  it('shows an error instead of an empty viewer when the 3D models cannot be loaded', async () => {
+    const { useCampaignCadModels } = await import('./reveal/useCampaignCadModels');
+    vi.mocked(useCampaignCadModels).mockReturnValueOnce(makeErrorResult(new Error('Request failed | status code: 401')));
+
+    renderViewerPage(mockDeps);
+
+    expect(screen.getByTestId('cad-model-load-error')).toHaveTextContent(
+      "Couldn't load the 3D models: Request failed | status code: 401",
+    );
+  });
+
+  it('says the 3D model is processing while CDF converts it', async () => {
+    const { useCampaignCadModels } = await import('./reveal/useCampaignCadModels');
+    vi.mocked(useCampaignCadModels).mockReturnValueOnce(
+      makeSuccessResult({ models: [makeDoneCadModel('test-campaign', 'Processing')], meshesWithoutModel: [] }),
+    );
+
+    renderViewerPage(mockDeps);
+
+    expect(screen.getByText(/being processed in CDF/)).toBeInTheDocument();
+  });
+
+  it('gives the right panel the edit-campaign view model of this area', async () => {
+    const { useEditCampaignViewModel } = await import('./campaigns/useEditCampaignViewModel');
+    const { ViewerRightPanel } = await import('./ViewerRightPanel');
+
+    renderViewerPage(mockDeps);
+
+    expect(vi.mocked(useEditCampaignViewModel)).toHaveBeenCalledWith('autoassess', 'area-01581');
+    expect(vi.mocked(ViewerRightPanel).mock.lastCall?.[0].editCampaignViewModel).toMatchObject({ isOpen: false });
   });
 
   it('renders SelectionPanel with null hit on initial load', async () => {
@@ -395,6 +490,45 @@ describe(ViewerPage.name, () => {
       await waitFor(() =>
         expect(screen.getByTestId('selection-panel').getAttribute('data-hit-kind')).toBe('image'),
       );
+    });
+  });
+
+  describe('?camera URL param', () => {
+    it('overrides the area default camera pose', async () => {
+      vi.mocked(mockDeps.useArea).mockReturnValue(
+        makeSuccessResult(
+          createMockArea({ initialCameraPosition: [9, 9, 9], initialCameraTarget: [0, 0, 0] }),
+        ) as ReturnType<ViewerViewModelContextType['useArea']>,
+      );
+
+      renderViewerPage(mockDeps, '/vessels/vessel-test/areas/area-01581?camera=1,2,3,4,5,6');
+
+      await waitFor(() => screen.getByTestId('ply-viewer-container'));
+      expect(capturedInitialCameraPose).toEqual({ position: [1, 2, 3], target: [4, 5, 6] });
+    });
+
+    it('writes the settled camera view into ?camera= so the link reopens the same view', async () => {
+      renderViewerPage(mockDeps);
+      await waitFor(() => screen.getByTestId('ply-viewer-container'));
+
+      act(() => capturedOnCameraSettled?.({ position: [1.23456, 2, 3], target: [4, 5, 6] }));
+
+      await waitFor(() =>
+        expect(capturedInitialCameraPose).toEqual({ position: [1.2346, 2, 3], target: [4, 5, 6] }),
+      );
+    });
+
+    it('falls back to the area default pose when the param is invalid', async () => {
+      vi.mocked(mockDeps.useArea).mockReturnValue(
+        makeSuccessResult(
+          createMockArea({ initialCameraPosition: [9, 9, 9], initialCameraTarget: [0, 0, 0] }),
+        ) as ReturnType<ViewerViewModelContextType['useArea']>,
+      );
+
+      renderViewerPage(mockDeps, '/vessels/vessel-test/areas/area-01581?camera=not,a,pose');
+
+      await waitFor(() => screen.getByTestId('ply-viewer-container'));
+      expect(capturedInitialCameraPose).toEqual({ position: [9, 9, 9], target: [0, 0, 0] });
     });
   });
 

@@ -7,6 +7,7 @@ import { VesselSettingsPage } from './features/vessels/VesselSettingsPage';
 import { AreaListView } from './features/areas/AreaListView';
 import { AreaSettingsPage } from './features/areas/AreaSettingsPage';
 import { ReportShell } from './features/reports/ReportShell';
+import { HostStateSync } from './shared/host/HostStateSync';
 
 // Lazy-load the viewer: @cognite/reveal is large and not needed until navigation
 const ViewerPage = lazy(() =>
@@ -38,6 +39,7 @@ function App() {
       }
     >
       <div className="min-h-screen bg-muted/50 text-foreground">
+        <HostStateSync />
         <Routes>
           <Route path="/" element={<VesselListView />} />
           <Route path="/vessels/:vesselId/settings" element={<VesselSettingsPage />} />

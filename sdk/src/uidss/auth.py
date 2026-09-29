@@ -4,9 +4,9 @@ from cognite.client import CogniteClient
 from cognite.client.config import ClientConfig, global_config
 from cognite.client.credentials import OAuthClientCredentials
 
-global_config.disable_pypi_version_check = True
-
 from uidss.config import UidssSettings
+
+global_config.disable_pypi_version_check = True
 
 
 def make_cognite_client(settings: UidssSettings | None = None) -> CogniteClient:

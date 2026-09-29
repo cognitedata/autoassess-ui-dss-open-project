@@ -8,6 +8,8 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from cognite.client.data_classes.data_modeling.cdm.v1 import CogniteFileApply
+from cognite.client.data_classes.data_modeling.instances import NodeApply
 
 from uidss.cdf.data_model import DRONE_IMAGE_VIEW, SPACE, view_key
 from uidss.services.drone_image_service import (
@@ -100,7 +102,7 @@ class TestApplyTbs:
 
     def test_ship_ch_t_bs_changes_pose(self) -> None:
         cfg = parse_sensor_yaml(SENSOR_YAML)
-        px, py, pz, qx, qy, qz, qw = _apply_t_bs(0, 0, 0, 0, 0, 0, 1, cfg.t_bs)
+        px, py, pz, *_ = _apply_t_bs(0, 0, 0, 0, 0, 0, 1, cfg.t_bs)
         # T_BS translation offset from ship_CH (non-zero)
         assert not (px == pytest.approx(0) and py == pytest.approx(0) and pz == pytest.approx(0))
 
@@ -177,10 +179,20 @@ class TestInterpolatePose:
 
 def _make_upload_client() -> tuple[CdfDroneImageService, Any]:
     mock_client: Any = MagicMock()
-    mock_client.files.upload = MagicMock(return_value=MagicMock(id=42))
+    mock_client.files.upload_content = MagicMock(return_value=MagicMock(id=42))
     mock_client.data_modeling = MagicMock()
     mock_client.data_modeling.instances.apply = MagicMock()
     return CdfDroneImageService(mock_client), mock_client
+
+
+def _file_nodes(mock_client: Any) -> list[CogniteFileApply]:
+    calls = mock_client.data_modeling.instances.apply.call_args_list
+    return [n for c in calls for n in c.kwargs["nodes"] if isinstance(n, CogniteFileApply)]
+
+
+def _image_nodes(mock_client: Any) -> list[NodeApply]:
+    calls = mock_client.data_modeling.instances.apply.call_args_list
+    return [n for c in calls for n in c.kwargs["nodes"] if not isinstance(n, CogniteFileApply)]
 
 
 class TestUpload:
@@ -189,15 +201,33 @@ class TestUpload:
         count = svc.upload(FIXTURES, "result-test", sensor_yaml=SENSOR_YAML)
         assert count == 3
 
-    def test_uploads_one_file_per_image(self) -> None:
+    def test_uploads_one_cognite_file_per_image(self) -> None:
         svc, mock_client = _make_upload_client()
         svc.upload(FIXTURES, "result-test", sensor_yaml=SENSOR_YAML)
-        assert mock_client.files.upload.call_count == 3
+        assert mock_client.files.upload_content.call_count == 3
+        mock_client.files.upload.assert_not_called()
 
-    def test_calls_apply_once_for_small_dataset(self) -> None:
+    def test_file_nodes_have_deterministic_ids_and_png_mime(self) -> None:
         svc, mock_client = _make_upload_client()
         svc.upload(FIXTURES, "result-test", sensor_yaml=SENSOR_YAML)
-        assert mock_client.data_modeling.instances.apply.call_count == 1
+        files = _file_nodes(mock_client)
+        assert [f.external_id for f in files] == [
+            f"drone-image-file-result-test-frame-{i}" for i in (1, 2, 3)
+        ]
+        assert {f.mime_type for f in files} == {"image/png"}
+        assert files[0].tags == ["autoassess", "drone_image", "campaign:result-test"]
+
+    def test_image_nodes_reference_uploaded_file_id(self) -> None:
+        svc, mock_client = _make_upload_client()
+        svc.upload(FIXTURES, "result-test", sensor_yaml=SENSOR_YAML)
+        nodes = _image_nodes(mock_client)
+        assert len(nodes) == 3
+        assert {n.sources[0].properties["cdfFileId"] for n in nodes} == {42}
+
+    def test_applies_one_file_batch_and_one_image_batch_for_small_dataset(self) -> None:
+        svc, mock_client = _make_upload_client()
+        svc.upload(FIXTURES, "result-test", sensor_yaml=SENSOR_YAML)
+        assert mock_client.data_modeling.instances.apply.call_count == 2
 
     def test_pose_differs_from_imu_pose(self) -> None:
         """T_BS must be applied — camera pose should differ from raw IMU pose."""
@@ -237,7 +267,9 @@ class TestUpload:
         svc, mock_client = _make_upload_client()
         count = svc.upload(folder, "result-big", sensor_yaml=SENSOR_YAML)
         assert count == 1200
-        assert mock_client.data_modeling.instances.apply.call_count == 2
+        # 2 CogniteFile batches (1000 + 200), then 2 DroneImage batches
+        assert mock_client.data_modeling.instances.apply.call_count == 4
+        assert len(_image_nodes(mock_client)) == 1200
 
 
 # ---------------------------------------------------------------------------

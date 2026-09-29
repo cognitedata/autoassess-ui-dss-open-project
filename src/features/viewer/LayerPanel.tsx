@@ -1,5 +1,5 @@
 import { Alert, AlertDescription, Loader } from '@cognite/aura/components';
-import { IconChevronDown, IconChevronRight, IconCircle, IconCircleFilled, IconDotsVertical, IconFileAnalytics } from '@tabler/icons-react';
+import { IconChevronDown, IconChevronRight, IconCircle, IconCircleFilled, IconDotsVertical, IconFileAnalytics, IconPlus } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '../../lib/utils';
 import type { ColorMode } from './colorModeStore';
@@ -9,9 +9,13 @@ import type { LayerType } from './LayerType';
 interface LayerPanelProps {
   viewModel: LayerPanelViewModel;
   onViewReport?: (campaignId: string) => void;
+  /** Opens the edit-campaign dialog (date and files). */
+  onEditCampaign?: (campaignId: string) => void;
+  /** Opens the "new campaign from files" dialog. */
+  onNewCampaign?: () => void;
 }
 
-export function LayerPanel({ viewModel, onViewReport }: LayerPanelProps) {
+export function LayerPanel({ viewModel, onViewReport, onEditCampaign, onNewCampaign }: LayerPanelProps) {
   const { campaigns, staticLayers, isLoading, error, isEmpty, onToggleCampaignExpanded, onToggleLayer, onToggleStaticLayer, onTogglePcdLayer, onColorModeChange } = viewModel;
 
   return (
@@ -58,9 +62,21 @@ export function LayerPanel({ viewModel, onViewReport }: LayerPanelProps) {
               onTogglePcdLayer={onTogglePcdLayer}
               onColorModeChange={onColorModeChange}
               onViewReport={onViewReport}
+              onEditCampaign={onEditCampaign}
             />
           ))}
         </div>
+      )}
+
+      {!isLoading && !error && onNewCampaign && (
+        <button
+          type="button"
+          onClick={onNewCampaign}
+          className="mt-2 flex items-center gap-1.5 rounded px-1 py-1.5 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <IconPlus size={14} aria-hidden />
+          New campaign from files
+        </button>
       )}
     </div>
   );
@@ -73,9 +89,10 @@ interface CampaignNodeProps {
   onTogglePcdLayer: (key: string, visible: boolean) => void;
   onColorModeChange: (layerType: LayerType, mode: ColorMode) => void;
   onViewReport?: (campaignId: string) => void;
+  onEditCampaign?: (campaignId: string) => void;
 }
 
-function CampaignNode({ campaign, onToggleExpanded, onToggleLayer, onTogglePcdLayer, onColorModeChange, onViewReport }: CampaignNodeProps) {
+function CampaignNode({ campaign, onToggleExpanded, onToggleLayer, onTogglePcdLayer, onColorModeChange, onViewReport, onEditCampaign }: CampaignNodeProps) {
   return (
     <div className="mb-1">
       <div className="flex items-center gap-0.5">
@@ -106,6 +123,9 @@ function CampaignNode({ campaign, onToggleExpanded, onToggleLayer, onTogglePcdLa
             <IconFileAnalytics size={14} aria-hidden />
           </button>
         )}
+        {onEditCampaign && (
+          <CampaignMenu label={campaign.label} onEdit={() => onEditCampaign(campaign.campaignId)} />
+        )}
       </div>
 
       {campaign.isExpanded && (
@@ -126,6 +146,49 @@ function CampaignNode({ campaign, onToggleExpanded, onToggleLayer, onTogglePcdLa
             />
           ))}
         </ul>
+      )}
+    </div>
+  );
+}
+
+function CampaignMenu({ label, onEdit }: { label: string; onEdit: () => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: PointerEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [open]);
+
+  return (
+    <div className="relative shrink-0" ref={menuRef}>
+      <button
+        type="button"
+        aria-label={`${label} options`}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className={cn(
+          'rounded p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
+          open && 'bg-accent text-foreground',
+        )}
+      >
+        <IconDotsVertical size={14} aria-hidden />
+      </button>
+      {open && (
+        <div className="absolute right-0 z-50 mt-1 min-w-[9rem] rounded border border-border bg-popover py-1 shadow-md" role="menu">
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => { setOpen(false); onEdit(); }}
+            className="flex w-full items-center px-3 py-1.5 text-left text-sm hover:bg-accent"
+          >
+            Edit campaign
+          </button>
+        </div>
       )}
     </div>
   );

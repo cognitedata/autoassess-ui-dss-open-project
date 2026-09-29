@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from cognite.client.data_classes.data_modeling import ViewId
 from cognite.client.data_classes.data_modeling.instances import Properties
 
 from uidss.cdf.data_model import (
@@ -18,7 +19,7 @@ from uidss.cdf.data_model import (
     container_property,
     view_key,
 )
-from uidss.models import ElementTarget, InspectionPlan, InspectionTask
+from uidss.models import ElementTarget, InspectionPlan, InspectionTask, NewRegionTask
 from uidss.services.plan_service import CdfPlanService, _build_plan_json, _task_to_dict
 
 # ---------------------------------------------------------------------------
@@ -262,7 +263,7 @@ class TestListTasks:
             INSPECTION_TASK_VIEW,
             {
                 "plan": {"space": SPACE, "externalId": "plan-001"},
-                "taskKind": "region",
+                "taskType": "region",
                 "inspectionType": "ndt_thickness",
                 "position3d": [1.0, 2.0, 3.0],
                 "normalVector": [0.0, 1.0, 0.0],
@@ -283,6 +284,21 @@ class TestListTasks:
         assert t.normal_vector == (0.0, 1.0, 0.0)
         assert t.radius_m == pytest.approx(0.25)
         assert t.target_element is None
+        assert t.suggestion_id is None
+
+    def test_maps_suggestion_id_when_present(self) -> None:
+        node = _make_node(
+            SPACE,
+            "task-r1",
+            INSPECTION_TASK_VIEW,
+            {
+                "plan": {"space": SPACE, "externalId": "plan-001"},
+                "taskType": "region",
+                "suggestionId": "finding:f1",
+            },
+        )
+        [task] = CdfPlanService(_make_client([node])).list_tasks("plan-001")
+        assert task.suggestion_id == "finding:f1"
 
     def test_maps_element_task_with_fetched_target(self) -> None:
         task_node = _make_node(
@@ -291,7 +307,7 @@ class TestListTasks:
             INSPECTION_TASK_VIEW,
             {
                 "plan": {"space": SPACE, "externalId": "plan-001"},
-                "taskKind": "element",
+                "taskType": "element",
                 "inspectionType": "visual",
                 "targetElement": {"space": SPACE, "externalId": "elem-001"},
             },
@@ -331,7 +347,7 @@ class TestListTasks:
             INSPECTION_TASK_VIEW,
             {
                 "plan": {"space": SPACE, "externalId": "plan-001"},
-                "taskKind": "element",
+                "taskType": "element",
                 "inspectionType": "visual",
                 "targetElement": {"space": SPACE, "externalId": "elem-missing"},
             },
@@ -352,7 +368,7 @@ class TestListTasks:
             INSPECTION_TASK_VIEW,
             {
                 "plan": {"space": SPACE, "externalId": "plan-001"},
-                "taskKind": "bogus",
+                "taskType": "bogus",
                 "inspectionType": "visual",
             },
         )
@@ -378,6 +394,104 @@ class TestUpdateStatus:
         assert node.external_id == "plan-001"
         props = node.sources[0].properties
         assert props["status"] == "Complete"
+
+
+# ---------------------------------------------------------------------------
+# create()
+# ---------------------------------------------------------------------------
+
+
+class TestCreate:
+    def test_returns_plan_prefixed_uuid_external_id(self) -> None:
+        eid = CdfPlanService(_make_client()).create("area-001", "result-001", "Findings", None)
+        assert eid.startswith("plan-")
+        assert len(eid) == len("plan-") + 36
+
+    def test_unique_ids_on_successive_calls(self) -> None:
+        service = CdfPlanService(_make_client())
+        assert service.create("a", "m", "n", None) != service.create("a", "m", "n", None)
+
+    def test_upserts_draft_plan_with_area_and_map_relations(self) -> None:
+        client = _make_client()
+        eid = CdfPlanService(client).create(
+            "area-001", "result-001", "  Findings run 7 ", " from pipeline "
+        )
+        nodes = client.data_modeling.instances.apply.call_args.kwargs["nodes"]
+        assert len(nodes) == 1
+        node = nodes[0]
+        assert node.space == SPACE
+        assert node.external_id == eid
+        source = node.sources[0]
+        assert source.source == ViewId(*INSPECTION_PLAN_VIEW)
+        assert source.properties == {
+            "area": {"space": SPACE, "externalId": "area-001"},
+            "map": {"space": SPACE, "externalId": "result-001"},
+            "status": "Draft",
+            "name": "Findings run 7",
+            "description": "from pipeline",
+        }
+
+    def test_omits_blank_name_and_description(self) -> None:
+        client = _make_client()
+        CdfPlanService(client).create("area-001", "result-001", " ", None)
+        source = client.data_modeling.instances.apply.call_args.kwargs["nodes"][0].sources[0]
+        assert "name" not in source.properties
+        assert "description" not in source.properties
+
+
+# ---------------------------------------------------------------------------
+# add_region_tasks()
+# ---------------------------------------------------------------------------
+
+
+class TestAddRegionTasks:
+    def test_upserts_region_task_with_web_field_names(self) -> None:
+        client = _make_client()
+        task = NewRegionTask(
+            position3d=(1.0, 2.0, 3.0),
+            normal_vector=(0.0, 0.0, 1.0),
+            radius_m=0.4,
+            inspection_type="ndt_thickness",
+            suggestion_id="finding:f1",
+        )
+        [eid] = CdfPlanService(client).add_region_tasks("plan-001", [task])
+        [node] = client.data_modeling.instances.apply.call_args.kwargs["nodes"]
+        assert node.space == SPACE
+        assert node.external_id == eid
+        assert eid.startswith("task-")
+        assert len(eid) == len("task-") + 36
+        source = node.sources[0]
+        assert source.source == ViewId(*INSPECTION_TASK_VIEW)
+        assert source.properties == {
+            "plan": {"space": SPACE, "externalId": "plan-001"},
+            "taskType": "region",
+            "inspectionType": "ndt_thickness",
+            "position3d": [1.0, 2.0, 3.0],
+            "normalVector": [0.0, 0.0, 1.0],
+            "radiusM": 0.4,
+            "suggestionId": "finding:f1",
+        }
+
+    def test_omits_suggestion_id_when_none(self) -> None:
+        client = _make_client()
+        task = NewRegionTask(position3d=(0, 0, 0), normal_vector=(0, 1, 0), radius_m=0.3)
+        CdfPlanService(client).add_region_tasks("plan-001", [task])
+        [node] = client.data_modeling.instances.apply.call_args.kwargs["nodes"]
+        assert "suggestionId" not in node.sources[0].properties
+        assert node.sources[0].properties["inspectionType"] == "visual"
+
+    def test_chunks_writes_of_at_most_1000_nodes(self) -> None:
+        client = _make_client()
+        task = NewRegionTask(position3d=(0, 0, 0), normal_vector=(0, 1, 0), radius_m=0.3)
+        eids = CdfPlanService(client).add_region_tasks("plan-001", [task] * 2500)
+        calls = client.data_modeling.instances.apply.call_args_list
+        assert [len(c.kwargs["nodes"]) for c in calls] == [1000, 1000, 500]
+        assert len(set(eids)) == 2500
+
+    def test_no_tasks_writes_nothing(self) -> None:
+        client = _make_client()
+        assert CdfPlanService(client).add_region_tasks("plan-001", []) == []
+        client.data_modeling.instances.apply.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -512,6 +626,18 @@ class TestBuildPlanJson:
         assert "position3d" not in d
         assert "normalVector" not in d
         assert "radiusM" not in d
+        assert "suggestionId" not in d
+
+    def test_includes_suggestion_id_when_set(self) -> None:
+        task = InspectionTask(
+            space=SPACE,
+            external_id="task-r3",
+            plan_external_id="plan-001",
+            kind="region",
+            inspection_type="visual",
+            suggestion_id="finding:f1+f2",
+        )
+        assert _task_to_dict(task)["suggestionId"] == "finding:f1+f2"
 
     def test_full_json_structure(self) -> None:
         plan = self._make_plan()

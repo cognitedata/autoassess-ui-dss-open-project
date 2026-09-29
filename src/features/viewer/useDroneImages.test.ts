@@ -106,6 +106,23 @@ describe(useDroneImageDownloadUrl.name, () => {
     expect(mockGetDownloadUrls).toHaveBeenCalledWith([{ id: 1592278063986069 }]);
   });
 
+  it('fetches a fresh URL when the image is opened again instead of reusing an expired one', async () => {
+    // CDF signed download URLs expire after ~30 s, so a cached URL is useless on the next open.
+    mockGetDownloadUrls
+      .mockResolvedValueOnce([{ downloadUrl: 'https://storage.example.test/first.png' }])
+      .mockResolvedValueOnce([{ downloadUrl: 'https://storage.example.test/second.png' }]);
+    const first = renderHook(() => useDroneImageDownloadUrl(42), { wrapper });
+    await waitFor(() => expect(first.result.current.data).toBe('https://storage.example.test/first.png'));
+    first.unmount();
+    await new Promise((resolve) => setTimeout(resolve, 0)); // the image is reopened later
+
+    const second = renderHook(() => useDroneImageDownloadUrl(42), { wrapper });
+
+    expect(second.result.current.data).toBeUndefined();
+    await waitFor(() => expect(second.result.current.data).toBe('https://storage.example.test/second.png'));
+    expect(mockGetDownloadUrls).toHaveBeenCalledTimes(2);
+  });
+
   it('propagates error from getDownloadUrl', async () => {
     mockGetDownloadUrls.mockResolvedValue([{}]); // no downloadUrl field → service throws
 

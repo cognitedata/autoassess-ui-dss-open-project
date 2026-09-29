@@ -97,6 +97,26 @@ def pick_or_create_campaign(campaigns: list[InspectionResult]) -> InspectionResu
     return choice  # type: ignore[return-value]
 
 
+def pick_map_campaign(campaigns: list[InspectionResult], interactive: bool) -> InspectionResult:
+    """Pick the reference map: a Complete campaign. Newest first; the newest is the default.
+
+    Prompts only when *interactive* and there is more than one Complete campaign.
+    """
+    complete = [c for c in campaigns if c.status == "Complete"]
+    if not complete:
+        raise _exit_with_error("The area has no Complete campaign to use as the plan's map.")
+    if len(complete) == 1 or not interactive:
+        console.print(f"Map: [bold]{complete[0].external_id}[/bold] ({complete[0].campaign_date})")
+        return complete[0]
+    choice = questionary.select(
+        "Select the map (campaign) the findings' coordinates are in:",
+        choices=[
+            questionary.Choice(f"{c.external_id}  {c.campaign_date}", value=c) for c in complete
+        ],
+    ).unsafe_ask()
+    return choice  # type: ignore[return-value]
+
+
 def ask_campaign_date() -> str:
     today = date.today().isoformat()
     value = questionary.text(f"Campaign date (YYYY-MM-DD) [{today}]:").unsafe_ask()

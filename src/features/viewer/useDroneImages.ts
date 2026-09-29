@@ -45,6 +45,8 @@ export function useDroneImageDownloadUrl(
     queryKey: ['droneImageUrl', cdfFileId],
     queryFn: () => new CdfDroneImageService(sdk).getDownloadUrl(cdfFileId!),
     enabled: cdfFileId !== null && cdfFileId !== 0,
-    staleTime: 55 * 60 * 1000, // CDF download URLs expire after ~1 hour
+    // CDF signed download URLs expire after ~30 s: never serve one from cache.
+    staleTime: 0,
+    gcTime: 0,
   });
 }

@@ -23,6 +23,7 @@
   "dependencies": {
     "@cognite/app-sdk": "^0.9.0",
     "@cognite/aura": "0.1.5",
+    "@cognite/reveal": "4.37.0",
     "@cognite/sdk": "^10.3.0",
     "@tabler/icons-react": "^3.35.0",
     "@tanstack/react-query": "^5.90.10",
@@ -32,7 +33,7 @@
     "react-router-dom": "^7.18.2",
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.4.0",
-    "three": "^0.180.0",
+    "three": "0.185.1",
     "zustand": "^5.0.12"
   },
   "devDependencies": {
@@ -45,7 +46,7 @@
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.6",
     "@types/react-dom": "^19.2.3",
-    "@types/three": "^0.180.0",
+    "@types/three": "^0.185.4",
     "@vitejs/plugin-react": "^5.1.1",
     "@vitest/coverage-v8": "^2.1.8",
     "@vitest/ui": "^2.1.8",

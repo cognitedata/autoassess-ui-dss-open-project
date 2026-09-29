@@ -68,6 +68,34 @@ dss plan download --output-dir /path/to/dir
 
 Prompts for vessel → area → plan, then writes `<plan-external-id>.json` to the output directory (defaults to the current directory).
 
+#### Create a Draft plan from a CSV of findings
+
+```bash
+dss plan import-findings findings.csv --area "BWT 3P" --dry-run      # show the tasks, write nothing
+dss plan import-findings findings.csv --area "BWT 3P" --yes          # create a new Draft plan
+dss plan import-findings more.csv --area "BWT 3P" --plan plan-… --yes  # add to a Draft plan
+```
+
+Turns points of interest from a detection pipeline into one region task per finding. Columns:
+`x,y,z` (required, metres, in the map campaign's frame), and optionally `id`, `nx,ny,nz`, `radius`,
+`inspection_type` (`visual` | `ndt_thickness`), `class`, `confidence` (0 to 1), `description`.
+Findings within `--merge-radius` (0.5 m) are merged. Missing normals come from the map campaign's
+3D model (`--normals model|centre|require`). Each task gets `suggestionId = finding:<id>`, so
+re-importing into the same `--plan` skips what is already there. Other flags: `--vessel`, `--map`,
+`--name`, `--min-confidence`, `--class`, `--radius`, `--inspection-type`, `--strict`. It never marks
+the plan Ready. Sample CSV: [`tests/fixtures/findings.csv`](tests/fixtures/findings.csv). Python API:
+`uidss.findings.plan_tasks_from_findings` with `client.plans.create` / `client.plans.add_region_tasks`.
+
+---
+
+### `dss worker` — Build 3D models automatically
+
+```bash
+dss worker [--area <area external id>] [--poll 30] [--once]
+```
+
+Watches the uploaded mesh CogniteFiles (tag `ply_mesh`) and builds the CDF 3D model of each one that has none (`{file}-cad-model`), one at a time. The robot's `autoassess_bridge` and `dss campaign upload --no-3d-model` only upload; the worker does the rest. Failing meshes are retried with backoff and given up after 5 attempts. Run it at boot (systemd/launchd examples in [the tutorial, chapter 4](../docs/tutorial/04-ground-station-sdk.md#14c-automatic-the-robot-uploads-dss-worker-builds)). `dss campaign build-3d-model --campaign <id>` does the same for one campaign, right away.
+
 ---
 
 ### `dss campaign` — Mission upload commands
@@ -135,5 +163,7 @@ test-first workflow, CDF interaction guidelines).
 each defined behind a `Protocol` and injected rather than hard-coded (see `AGENTS.md`). Services
 live in `src/uidss/services/`: `plan_service`, `vessel_service`, `area_service`,
 `structural_element_service`, `artifact_service`, `campaign_service`, `campaign_metric_service`,
-`ndt_measurement_service`, and `drone_image_service`. CDF space/container/view constants live in
+`ndt_measurement_service`, `drone_image_service`, and `threed_service`. `src/uidss/findings.py` (with
+`threed/normals.py`) is the pure findings → region tasks logic behind `plan import-findings`. CDF
+space/container/view constants live in
 `src/uidss/cdf/data_model.py` (see the sync note above).

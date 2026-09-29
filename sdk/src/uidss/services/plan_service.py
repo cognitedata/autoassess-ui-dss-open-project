@@ -1,8 +1,10 @@
-"""Inspection plan service — list, download JSON, and update status."""
+"""Inspection plan service — list, create, add region tasks, download JSON, update status."""
 
 from __future__ import annotations
 
 import json
+import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -11,7 +13,11 @@ from typing import Any, Protocol, cast
 import structlog
 from cognite.client import CogniteClient
 from cognite.client.data_classes.data_modeling import ViewId
-from cognite.client.data_classes.data_modeling.instances import NodeApply, NodeOrEdgeData
+from cognite.client.data_classes.data_modeling.instances import (
+    NodeApply,
+    NodeOrEdgeData,
+    PropertyValueWrite,
+)
 
 from uidss.cdf.data_model import (
     INSPECTION_PLAN_CONTAINER,
@@ -29,6 +35,7 @@ from uidss.models import (
     InspectionPlan,
     InspectionTask,
     InspectionType,
+    NewRegionTask,
     PlanStatus,
     TaskKind,
 )
@@ -36,6 +43,7 @@ from uidss.models import (
 log = structlog.get_logger()
 
 _List = list  # avoid shadowing by method named `list`
+_CHUNK_SIZE = 1000
 _VALID_STATUSES: frozenset[str] = frozenset({"Draft", "Ready", "Complete"})
 _VALID_ELEMENT_TYPES: frozenset[str] = frozenset({"manhole", "longitudinal", "wall", "compartment"})
 _VALID_INSPECTION_TYPES: frozenset[str] = frozenset({"visual", "ndt_thickness"})
@@ -47,6 +55,16 @@ class PlanServiceProtocol(Protocol):
     def count_tasks(self, plan_external_ids: _List[str]) -> dict[str, int]: ...
     def list_tasks(self, plan_external_id: str) -> _List[InspectionTask]: ...
     def update_status(self, space: str, external_id: str, status: PlanStatus) -> None: ...
+    def create(
+        self,
+        area_external_id: str,
+        map_external_id: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> str: ...
+    def add_region_tasks(
+        self, plan_external_id: str, tasks: Sequence[NewRegionTask]
+    ) -> _List[str]: ...
     def download(self, space: str, external_id: str, area_name: str, output_path: Path) -> None: ...
 
 
@@ -146,6 +164,54 @@ class CdfPlanService:
         )
         log.info("updated plan status", plan=external_id, status=status)
 
+    def create(
+        self,
+        area_external_id: str,
+        map_external_id: str,
+        name: str | None = None,
+        description: str | None = None,
+    ) -> str:
+        """Create a Draft plan on *area_external_id* whose coordinates use *map_external_id*.
+
+        Mirrors the web app's ``CdfInspectionPlanService.create``: ``plan-<uuid4>`` with
+        ``area`` / ``map`` direct relations and ``status: "Draft"``. Blank name/description
+        are omitted. Returns the new plan's externalId.
+        """
+        external_id = f"plan-{uuid.uuid4()}"
+        properties: dict[str, PropertyValueWrite] = {
+            "area": {"space": SPACE, "externalId": area_external_id},
+            "map": {"space": SPACE, "externalId": map_external_id},
+            "status": "Draft",
+        }
+        if name and name.strip():
+            properties["name"] = name.strip()
+        if description and description.strip():
+            properties["description"] = description.strip()
+        self._client.data_modeling.instances.apply(
+            nodes=[
+                NodeApply(
+                    space=SPACE,
+                    external_id=external_id,
+                    sources=[
+                        NodeOrEdgeData(source=ViewId(*INSPECTION_PLAN_VIEW), properties=properties)
+                    ],
+                )
+            ]
+        )
+        log.info("created plan", plan=external_id, area=area_external_id, map=map_external_id)
+        return external_id
+
+    def add_region_tasks(self, plan_external_id: str, tasks: Sequence[NewRegionTask]) -> _List[str]:
+        """Add region tasks (``task-<uuid4>``, same fields as the web app) to a plan.
+
+        Written in chunks of at most 1000 nodes. Returns the new tasks' externalIds in order.
+        """
+        nodes = [_region_task_node(plan_external_id, task) for task in tasks]
+        for i in range(0, len(nodes), _CHUNK_SIZE):
+            self._client.data_modeling.instances.apply(nodes=nodes[i : i + _CHUNK_SIZE])
+        log.info("added region tasks", plan=plan_external_id, count=len(nodes))
+        return [node.external_id for node in nodes]
+
     def download(self, space: str, external_id: str, area_name: str, output_path: Path) -> None:
         """Fetch plan + tasks from CDF and write plan.json to *output_path*."""
         plans = self._client.data_modeling.instances.retrieve(
@@ -165,6 +231,24 @@ class CdfPlanService:
 # ---------------------------------------------------------------------------
 # Mapping helpers
 # ---------------------------------------------------------------------------
+
+
+def _region_task_node(plan_external_id: str, task: NewRegionTask) -> NodeApply:
+    properties: dict[str, PropertyValueWrite] = {
+        "plan": {"space": SPACE, "externalId": plan_external_id},
+        "taskType": "region",
+        "inspectionType": task.inspection_type,
+        "position3d": [float(v) for v in task.position3d],
+        "normalVector": [float(v) for v in task.normal_vector],
+        "radiusM": float(task.radius_m),
+    }
+    if task.suggestion_id is not None:
+        properties["suggestionId"] = task.suggestion_id
+    return NodeApply(
+        space=SPACE,
+        external_id=f"task-{uuid.uuid4()}",
+        sources=[NodeOrEdgeData(source=ViewId(*INSPECTION_TASK_VIEW), properties=properties)],
+    )
 
 
 def _map_plan_node(item: object) -> InspectionPlan:
@@ -197,7 +281,7 @@ def _map_task_node(item: object, client: CogniteClient) -> InspectionTask:
     plan_ref = task_props.get("plan") or {}
     plan_eid = str(plan_ref.get("externalId", "")) if isinstance(plan_ref, dict) else ""
 
-    raw_kind = str(task_props.get("taskKind", "region"))
+    raw_kind = str(task_props.get("taskType", "region"))
     kind = cast(TaskKind, raw_kind if raw_kind in _VALID_TASK_KINDS else "region")
 
     raw_itype = str(task_props.get("inspectionType", "visual"))
@@ -212,6 +296,7 @@ def _map_task_node(item: object, client: CogniteClient) -> InspectionTask:
 
     pos = task_props.get("position3d")
     normal = task_props.get("normalVector")
+    suggestion_id = task_props.get("suggestionId")
 
     return InspectionTask(
         space=getattr(item, "space", SPACE),
@@ -229,6 +314,7 @@ def _map_task_node(item: object, client: CogniteClient) -> InspectionTask:
             else None
         ),
         radius_m=float(task_props["radiusM"]) if "radiusM" in task_props else None,
+        suggestion_id=suggestion_id if isinstance(suggestion_id, str) else None,
     )
 
 
@@ -291,4 +377,6 @@ def _task_to_dict(task: InspectionTask) -> dict[str, Any]:
             d["normalVector"] = list(task.normal_vector)
         if task.radius_m is not None:
             d["radiusM"] = task.radius_m
+    if task.suggestion_id is not None:
+        d["suggestionId"] = task.suggestion_id
     return d
