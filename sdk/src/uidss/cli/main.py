@@ -225,9 +225,19 @@ def plan_download(
     output_dir: Path = typer.Option(
         Path("."), "--output-dir", "-o", help="Directory for plan.json"
     ),
+    name: str | None = typer.Option(
+        None,
+        "--name",
+        help="Download the plan with exactly this name (any status), skipping the "
+        "interactive pickers.",
+    ),
 ) -> None:
     """Download a ready inspection plan to plan.json."""
     vessels_svc, areas_svc, plans_svc, *_ = _get_client()
+
+    if name is not None:
+        _download_plan_by_name(areas_svc, plans_svc, name, output_dir)
+        return
 
     vessel = pick_vessel(vessels_svc.list())
     areas = areas_svc.list(vessel.space, vessel.external_id)
@@ -239,6 +249,31 @@ def plan_download(
     output_path = output_dir / f"{plan.external_id}.json"
     plans_svc.download(plan.space, plan.external_id, area.name, output_path)
     console.print(f"Downloaded [bold]{plan.external_id}.json[/bold] to {output_path}")
+
+
+def _download_plan_by_name(
+    areas_svc: AreaServiceProtocol,
+    plans_svc: PlanServiceProtocol,
+    name: str,
+    output_dir: Path,
+) -> None:
+    """Resolve *name* to exactly one plan (any status) and download it without any picker."""
+    matches = plans_svc.find_by_name(name)
+    if not matches:
+        raise ValueError(f"No plan named '{name}' found")
+    if len(matches) > 1:
+        listing = "\n".join(
+            f"  {p.external_id} ({p.status}, area {p.area_external_id})" for p in matches
+        )
+        raise ValueError(
+            f"{len(matches)} plans are named '{name}':\n{listing}\n"
+            "Run without --name to pick interactively, or rename the plans."
+        )
+    plan = matches[0]
+    area = areas_svc.get(plan.space, plan.area_external_id)
+    output_path = output_dir / f"{plan.external_id}.json"
+    plans_svc.download(plan.space, plan.external_id, area.name, output_path)
+    console.print(f"Downloaded [bold]{plan.name}[/bold] ({plan.status}) to {output_path}")
 
 
 @plan_app.command("download-map")

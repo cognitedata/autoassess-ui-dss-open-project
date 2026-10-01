@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from cognite.client.data_classes.data_modeling.instances import Properties
 
 from uidss.cdf.data_model import AREA_VIEW, SPACE, VESSEL_VIEW, view_key
@@ -117,3 +118,35 @@ class TestCdfAreaService:
         vessel_clause = next((c for c in and_clauses if "equals" in c), None)
         assert vessel_clause is not None
         assert vessel_clause["equals"]["value"]["externalId"] == "vessel-007"
+
+    def test_get_returns_the_mapped_area(self) -> None:
+        node = _make_node(
+            SPACE,
+            "area-001",
+            AREA_VIEW,
+            {
+                "name": "BWT Port Side",
+                "areaType": "ballast_water_tank",
+                "vessel": {"space": SPACE, "externalId": "vessel-001"},
+            },
+        )
+        client = _make_client([])
+        retrieve_result = MagicMock()
+        retrieve_result.nodes = [node]
+        client.data_modeling.instances.retrieve.return_value = retrieve_result
+        area = CdfAreaService(client).get(SPACE, "area-001")
+        assert area == Area(
+            space=SPACE,
+            external_id="area-001",
+            name="BWT Port Side",
+            area_type="ballast_water_tank",
+            vessel_external_id="vessel-001",
+        )
+
+    def test_get_raises_a_value_error_when_the_area_is_missing(self) -> None:
+        client = _make_client([])
+        retrieve_result = MagicMock()
+        retrieve_result.nodes = []
+        client.data_modeling.instances.retrieve.return_value = retrieve_result
+        with pytest.raises(ValueError, match="Area 'area-999' not found"):
+            CdfAreaService(client).get(SPACE, "area-999")
