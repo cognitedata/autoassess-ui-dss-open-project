@@ -164,6 +164,94 @@ class TestPlanDownloadMap:
         assert "mesh.ply" in result.output
 
 
+def _stub_client_for_download_by_name(
+    plans: list[InspectionPlan],
+) -> tuple[tuple[MagicMock, ...], MagicMock, MagicMock]:
+    area = Area(
+        space="autoassess",
+        external_id="a-1",
+        name="BWT Port",
+        area_type="ballast_water_tank",
+        vessel_external_id="v-1",
+    )
+    areas_svc = MagicMock()
+    areas_svc.get.return_value = area
+    plans_svc = MagicMock()
+    plans_svc.find_by_name.return_value = plans
+    client_tuple = (MagicMock(), areas_svc, plans_svc, *(MagicMock() for _ in range(5)))
+    return client_tuple, areas_svc, plans_svc
+
+
+class TestPlanDownloadByName:
+    def test_download_by_name_skips_the_pickers(self, tmp_path: Path) -> None:
+        plan = InspectionPlan(
+            space="autoassess",
+            external_id="plan-001",
+            area_external_id="a-1",
+            status="Active",
+            created_time=0,
+            name="Q3 hull survey",
+        )
+        client_tuple, _, plans_svc = _stub_client_for_download_by_name([plan])
+        with (
+            patch("uidss.cli.main._get_client", return_value=client_tuple),
+            patch("uidss.cli.main.pick_vessel") as pick_vessel_mock,
+            patch("uidss.cli.main.pick_area") as pick_area_mock,
+            patch("uidss.cli.main.pick_plan") as pick_plan_mock,
+        ):
+            result = runner.invoke(
+                app, ["plan", "download", "--name", "Q3 hull survey", "-o", str(tmp_path)]
+            )
+        assert result.exit_code == 0, result.output
+        pick_vessel_mock.assert_not_called()
+        pick_area_mock.assert_not_called()
+        pick_plan_mock.assert_not_called()
+        plans_svc.find_by_name.assert_called_once_with("Q3 hull survey")
+        plans_svc.download.assert_called_once_with(
+            "autoassess", "plan-001", "BWT Port", tmp_path / "plan-001.json"
+        )
+
+    def test_download_by_name_errors_when_no_plan_matches(self, tmp_path: Path) -> None:
+        client_tuple, _, _ = _stub_client_for_download_by_name([])
+        with patch("uidss.cli.main._get_client", return_value=client_tuple):
+            result = runner.invoke(
+                app, ["plan", "download", "--name", "Nonexistent", "-o", str(tmp_path)]
+            )
+        assert result.exit_code == 1
+        assert "Nonexistent" in result.output
+
+    def test_download_by_name_errors_listing_all_matches_when_ambiguous(
+        self, tmp_path: Path
+    ) -> None:
+        plans = [
+            InspectionPlan(
+                space="autoassess",
+                external_id="plan-001",
+                area_external_id="a-1",
+                status="Ready",
+                created_time=0,
+                name="Weekly survey",
+            ),
+            InspectionPlan(
+                space="autoassess",
+                external_id="plan-002",
+                area_external_id="a-2",
+                status="Draft",
+                created_time=0,
+                name="Weekly survey",
+            ),
+        ]
+        client_tuple, _, plans_svc = _stub_client_for_download_by_name(plans)
+        with patch("uidss.cli.main._get_client", return_value=client_tuple):
+            result = runner.invoke(
+                app, ["plan", "download", "--name", "Weekly survey", "-o", str(tmp_path)]
+            )
+        assert result.exit_code == 1
+        assert "plan-001" in result.output
+        assert "plan-002" in result.output
+        plans_svc.download.assert_not_called()
+
+
 class TestFriendlyErrorHandling:
     def test_cognite_api_error_prints_friendly_message(self) -> None:
         with patch(

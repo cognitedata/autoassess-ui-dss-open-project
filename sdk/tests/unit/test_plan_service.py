@@ -216,6 +216,82 @@ class TestList:
 
 
 # ---------------------------------------------------------------------------
+# find_by_name()
+# ---------------------------------------------------------------------------
+
+
+class TestFindByName:
+    def test_find_by_name_filters_on_name_and_not_deleted(self) -> None:
+        client = _make_client([])
+        CdfPlanService(client).find_by_name("Q3 hull survey")
+        kwargs = client.data_modeling.instances.list.call_args.kwargs
+        assert kwargs["sources"] == [ViewId(*INSPECTION_PLAN_VIEW)]
+        assert kwargs["filter"] == {
+            "and": [
+                {
+                    "equals": {
+                        "property": container_property(INSPECTION_PLAN_CONTAINER, "name"),
+                        "value": "Q3 hull survey",
+                    }
+                },
+                {
+                    "not": {
+                        "exists": {
+                            "property": container_property(INSPECTION_PLAN_CONTAINER, "deletedAt")
+                        }
+                    }
+                },
+            ]
+        }
+
+    def test_find_by_name_maps_matching_nodes(self) -> None:
+        nodes = [
+            _make_node(
+                SPACE,
+                "plan-001",
+                INSPECTION_PLAN_VIEW,
+                {
+                    "area": {"space": SPACE, "externalId": "area-001"},
+                    "status": "Ready",
+                    "name": "Q3 hull survey",
+                },
+                created_time=1000,
+            ),
+            _make_node(
+                SPACE,
+                "plan-002",
+                INSPECTION_PLAN_VIEW,
+                {
+                    "area": {"space": SPACE, "externalId": "area-002"},
+                    "status": "Active",
+                    "name": "Q3 hull survey",
+                },
+                created_time=2000,
+            ),
+        ]
+        service = CdfPlanService(_make_client(nodes))
+        plans = service.find_by_name("Q3 hull survey")
+        assert plans == [
+            InspectionPlan(
+                space=SPACE,
+                external_id="plan-001",
+                area_external_id="area-001",
+                status="Ready",
+                created_time=1000,
+                name="Q3 hull survey",
+            ),
+            InspectionPlan(
+                space=SPACE,
+                external_id="plan-002",
+                area_external_id="area-002",
+                status="Active",
+                created_time=2000,
+                name="Q3 hull survey",
+            ),
+        ]
+
+
+# ---------------------------------------------------------------------------
 # count_tasks()
 # ---------------------------------------------------------------------------
 

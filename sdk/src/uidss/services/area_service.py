@@ -24,6 +24,7 @@ _List = list  # avoid shadowing by method named `list`
 
 class AreaServiceProtocol(Protocol):
     def list(self, vessel_space: str, vessel_external_id: str) -> _List[Area]: ...
+    def get(self, space: str, external_id: str) -> Area: ...
 
 
 @dataclass
@@ -56,6 +57,16 @@ class CdfAreaService:
         areas = [_map_node(item) for item in response if item.instance_type == "node"]
         log.debug("listed areas", vessel=vessel_external_id, count=len(areas))
         return areas
+
+    def get(self, space: str, external_id: str) -> Area:
+        """Retrieve one area by id; raise ValueError when it does not exist."""
+        response = self._client.data_modeling.instances.retrieve(
+            nodes=[(space, external_id)],
+            sources=[view_id(AREA_VIEW)],
+        )
+        if not response.nodes:
+            raise ValueError(f"Area '{external_id}' not found")
+        return _map_node(response.nodes[0])
 
 
 def _map_node(item: object) -> Area:

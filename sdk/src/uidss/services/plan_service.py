@@ -52,6 +52,7 @@ _VALID_TASK_KINDS: frozenset[str] = frozenset({"element", "region"})
 
 class PlanServiceProtocol(Protocol):
     def list(self, area_space: str, area_external_id: str) -> _List[InspectionPlan]: ...
+    def find_by_name(self, name: str) -> _List[InspectionPlan]: ...
     def count_tasks(self, plan_external_ids: _List[str]) -> dict[str, int]: ...
     def list_tasks(self, plan_external_id: str) -> _List[InspectionTask]: ...
     def update_status(self, space: str, external_id: str, status: PlanStatus) -> None: ...
@@ -100,6 +101,36 @@ class CdfPlanService:
         plans = [_map_plan_node(item) for item in response if item.instance_type == "node"]
         plans.sort(key=lambda p: p.created_time, reverse=True)
         log.debug("listed plans", area=area_external_id, count=len(plans))
+        return plans
+
+    def find_by_name(self, name: str) -> _List[InspectionPlan]:
+        """Return every non-deleted plan in the project whose name equals *name* exactly."""
+        response = self._client.data_modeling.instances.list(
+            instance_type="node",
+            sources=[view_id(INSPECTION_PLAN_VIEW)],
+            filter={
+                "and": [
+                    {
+                        "equals": {
+                            "property": container_property(INSPECTION_PLAN_CONTAINER, "name"),
+                            "value": name,
+                        }
+                    },
+                    {
+                        "not": {
+                            "exists": {
+                                "property": container_property(
+                                    INSPECTION_PLAN_CONTAINER, "deletedAt"
+                                )
+                            }
+                        }
+                    },
+                ]
+            },
+            limit=1000,
+        )
+        plans = [_map_plan_node(item) for item in response if item.instance_type == "node"]
+        log.debug("found plans by name", name=name, count=len(plans))
         return plans
 
     def count_tasks(self, plan_external_ids: _List[str]) -> dict[str, int]:
