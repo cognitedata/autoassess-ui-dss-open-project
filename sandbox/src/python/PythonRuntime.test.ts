@@ -177,6 +177,7 @@ const PLAN: InspectionPlan = {
   areaExternalId: 'a',
   status: 'Complete',
   createdTime: 0,
+  lastUpdatedTime: 0,
   name: null,
   description: null,
   mapExternalId: null,

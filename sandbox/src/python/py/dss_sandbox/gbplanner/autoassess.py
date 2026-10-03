@@ -1,13 +1,20 @@
 """Simulated autoassess_bridge: the ROS node that connects gbplanner to AutoAssess (CDF).
 
-The real node (`autoassess_bridge`, ROS 1) follows the area's Active plan in CDF — or, when no
-plan is Active, the newest Ready plan — and publishes it latched (`/autoassess/plan`, `/autoassess/plan_id`, `/autoassess/inspection_targets`), buffers
-findings your detection stack publishes on `/autoassess/findings`, and at mission end uploads
-the mission and reports progress on `/autoassess/upload_status`.
+The real node (`autoassess_bridge`, ROS 1) follows one plan in CDF: the most recently updated
+**Active** plan — or, when no plan is Active, the most recently updated **Ready** plan.
+Update-time ties are broken by creation time; Draft and Complete plans are never followed. With
+a `plan_name` override only the Ready or Active plan with exactly that name is followed: no
+such plan means nothing is relayed (a warning on every poll); several mean the most recently
+updated one wins regardless of status (Active does not beat Ready there). The followed plan is
+published latched (`/autoassess/plan`, `/autoassess/plan_id`, `/autoassess/inspection_targets`);
+the node also buffers findings your detection stack publishes on `/autoassess/findings`, and at
+mission end uploads the mission and reports progress on `/autoassess/upload_status`.
 
-This twin answers the same topics through `sim_gbplanner.ros`, fed from the plan loaded into
-`sim_drone`. Findings are validated and buffered with the real node's rules (bad entries are
-skipped and logged). When the drone lands (or on the `autoassess_bridge/upload_mission`
+This twin answers the same topics through `sim_gbplanner.ros`. The plan topics re-select the
+followed plan from the browser's data snapshot on every subscribe (one poll of the real node,
+see `plan_to_follow`); the mission itself (flight, findings, upload) follows the plan loaded
+into `sim_drone`. Findings are validated and buffered with the real node's rules (bad entries
+are skipped and logged). When the drone lands (or on the `autoassess_bridge/upload_mission`
 service) the mission end is simulated: `/autoassess/upload_status` goes through
 exporting_mesh -> uploading -> complete, and the buffered findings become simulated defect
 detections on the (simulated) campaign. Nothing is written to CDF; in the real AutoAssess app
@@ -26,6 +33,8 @@ from dss_sandbox.gbplanner.geometry_msgs import PoseArray
 from dss_sandbox.gbplanner.std_msgs import String
 from dss_sandbox.gbplanner.transforms import to_pose_stamped
 from dss_sandbox.pose import pose_for_task, task_target
+from uidss import _snapshot
+from uidss.services import build_plan_json
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -38,6 +47,8 @@ STANDOFF_M = 0.8
 DEFAULT_RADIUS_M = 0.3
 MAX_ID_LENGTH = 200
 _INSPECTION_TYPES = ("visual", "ndt_thickness")
+#: The statuses the bridge may follow, in order of precedence (like the real node's).
+_FOLLOWABLE_STATUSES = ("Active", "Ready")
 
 PLAN_TOPIC = "/autoassess/plan"
 PLAN_ID_TOPIC = "/autoassess/plan_id"
@@ -55,6 +66,63 @@ BRIDGE_OUTPUT_TOPICS: dict[str, type] = {
 }
 #: Topics the simulated bridge subscribes to.
 BRIDGE_INPUT_TOPICS: dict[str, type] = {FINDINGS_TOPIC: String}
+
+
+def plan_to_follow(
+    plans: list[dict[str, Any]],
+    plan_name: str | None = None,
+    warn: Callable[[str], None] | None = None,
+) -> dict[str, Any] | None:
+    """The snapshot plan the bridge should follow, selected with the real node's rule.
+
+    In order: the most recently updated **Active** plan (the viewer sets at most one per area);
+    without any Active plan, the most recently updated **Ready** plan. Update-time ties are
+    broken by creation time. Draft and Complete plans are never followed. Several Active plans
+    are a viewer-side inconsistency: a warning names them all and the most recently updated one
+    wins.
+
+    With `plan_name` only the Ready or Active plan with exactly that name is followed, replacing
+    the status precedence: no such plan is a warning (every call) and None; several are a
+    warning naming them all, and the most recently updated one wins regardless of status
+    (Active does not beat Ready here).
+    """
+
+    def _warn(line: str) -> None:
+        if warn is not None:
+            warn(line)
+
+    def newest(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+        return max(
+            candidates,
+            key=lambda p: (int(p.get("lastUpdatedTime") or 0), int(p.get("createdTime") or 0)),
+        )
+
+    followable = [p for p in plans if p.get("status") in _FOLLOWABLE_STATUSES]
+    if plan_name:
+        matches = [p for p in followable if p.get("name") == plan_name]
+        if not matches:
+            _warn(f"No Ready or Active plan named '{plan_name}' — relaying nothing")
+            return None
+        if len(matches) > 1:
+            ids = ", ".join(str(p.get("externalId")) for p in matches)
+            _warn(
+                f"{len(matches)} Ready or Active plans named '{plan_name}' ({ids}); "
+                "following the most recently updated"
+            )
+        return newest(matches)
+    active = [p for p in followable if p.get("status") == "Active"]
+    if len(active) > 1:
+        ids = ", ".join(str(p.get("externalId")) for p in active)
+        _warn(
+            f"{len(active)} Active plans ({ids}) although the viewer keeps at most one per "
+            "area; following the most recently updated"
+        )
+    if active:
+        return newest(active)
+    ready = [p for p in followable if p.get("status") == "Ready"]
+    if not ready:
+        return None
+    return newest(ready)
 
 
 @dataclass(frozen=True)
@@ -198,12 +266,22 @@ def _text(row: dict[str, Any], key: str) -> str | None:
 class SimAutoassessBridge:
     """The simulated bridge behind `sim_gbplanner.ros`'s /autoassess/* topics.
 
-    `deliver(topic, msg)` hands a message to the SimRos subscribers of that topic.
+    `deliver(topic, msg)` hands a message to the SimRos subscribers of that topic. The plan
+    topics follow the plan `plan_to_follow` selects from the data snapshot — the most recently
+    updated Active plan, else the most recently updated Ready plan, or with `plan_name` only
+    the Ready or Active plan with exactly that name — re-selected on every poll (= every
+    latched subscribe).
     """
 
-    def __init__(self, sim_drone: SimDrone, deliver: Callable[[str, Any], None]) -> None:
+    def __init__(
+        self,
+        sim_drone: SimDrone,
+        deliver: Callable[[str, Any], None],
+        plan_name: str | None = None,
+    ) -> None:
         self._drone = sim_drone
         self._deliver = deliver
+        self._plan_name = plan_name
         self._buffer: dict[str, Finding] = {}
         self._reported_errors: set[str] = set()
         self._mission = 1
@@ -217,9 +295,9 @@ class SimAutoassessBridge:
         """The current value(s) of a latched topic, delivered on subscribe (like ROS latching)."""
         if topic == UPLOAD_STATUS_TOPIC:
             return [String(data=json.dumps(self._status or self._status_message("idle")))]
-        plan = self._drone.plan
+        plan = self._followed_plan_json()
         if plan is None:
-            return []  # like the real node before it has found an Active or Ready plan
+            return []  # like the real node when it has no Active or Ready plan to follow
         if topic == PLAN_TOPIC:
             return [String(data=json.dumps(plan))]
         if topic == PLAN_ID_TOPIC:
@@ -237,6 +315,14 @@ class SimAutoassessBridge:
             msg.header.stamp = stamp
             return [msg]
         return []
+
+    def _followed_plan_json(self) -> dict[str, Any] | None:
+        """plan.json of the plan the bridge follows, re-selected from the snapshot (one poll)."""
+        data = _snapshot.load()
+        meta = plan_to_follow(data["plans"], self._plan_name, warn=self._log)
+        if meta is None:
+            return None
+        return build_plan_json(data, str(meta["externalId"]))
 
     # --- findings --------------------------------------------------------------------------
 

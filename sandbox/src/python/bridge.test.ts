@@ -360,6 +360,7 @@ function snapshotWithBox(): SandboxSnapshot {
     areaExternalId: 'a1',
     status: 'Ready',
     createdTime: 0,
+    lastUpdatedTime: 0,
     name: 'P1',
     description: null,
     mapExternalId: null,

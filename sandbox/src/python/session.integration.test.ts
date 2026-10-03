@@ -14,6 +14,10 @@ import { PYTHON_FILES } from './pythonFiles';
 import type { RunOutcome } from './session';
 import { PythonSession } from './session';
 
+/** The bridge's pick key as written in the starter examples (Active first, then recency). */
+const EXAMPLES_PICK_KEY =
+  'key=lambda c: (c[1].status == "Active", c[1].last_updated_time, c[1].created_time)';
+
 describe('PythonSession (real Pyodide)', () => {
   let session: PythonSession;
   let snapshot: SandboxSnapshot;
@@ -62,6 +66,7 @@ describe('PythonSession (real Pyodide)', () => {
         'a = c.areas.list(v.space, v.external_id)[0]',
         'plans = c.plans.list(a.space, a.external_id)',
         'print(type(plans[0]).__name__, plans[0].created_time >= plans[-1].created_time)',
+        'print("updated", plans[0].last_updated_time == plans[0].created_time > 0)',
         't = c.plans.list_tasks("demo-plan-followup")[0]',
         'print(type(t).__name__, t.kind, t.target_element.center)',
       ].join('\n'),
@@ -69,6 +74,7 @@ describe('PythonSession (real Pyodide)', () => {
 
     expect(outcome).toEqual({ ok: true });
     expect(stdout).toContain('InspectionPlan True');
+    expect(stdout).toContain('updated True');
     expect(stdout).toContain('InspectionTask element (4.171, 0.237, 0.845)');
   });
 
@@ -821,7 +827,13 @@ describe('PythonSession (real Pyodide)', () => {
 
     beforeAll(async () => {
       const followup = snapshot.plans.find((p) => p.externalId === 'demo-plan-followup')!;
-      const emptyReady = { ...followup, externalId: 'empty-ready', name: null, createdTime: followup.createdTime + 1 };
+      const emptyReady = {
+        ...followup,
+        externalId: 'empty-ready',
+        name: null,
+        createdTime: followup.createdTime + 1,
+        lastUpdatedTime: followup.lastUpdatedTime + 1,
+      };
       quirky = { ...snapshot, plans: [...snapshot.plans, emptyReady] };
       const indexURL = fileURLToPath(new URL('../../node_modules/pyodide/', import.meta.url));
       quirkySession = await PythonSession.create({ loadPyodide, indexURL, files: PYTHON_FILES, snapshot: quirky });
@@ -835,7 +847,11 @@ describe('PythonSession (real Pyodide)', () => {
     });
 
     it('should label an unnamed plan in the fly-mission example', async () => {
-      const renamed = await run(quirkySession, example('fly-mission').replace('key=lambda c: (c[1].status == "Active", c[1].created_time)', "key=lambda c: c[1].external_id == 'empty-ready'").replace('counts[p.external_id] > 0', 'True'));
+      // Guard: the patch below must track the examples' pick key; fail loudly when it changes.
+      const code = example('fly-mission');
+      expect(code).toContain(EXAMPLES_PICK_KEY);
+
+      const renamed = await run(quirkySession, code.replace(EXAMPLES_PICK_KEY, "key=lambda c: c[1].external_id == 'empty-ready'").replace('counts[p.external_id] > 0', 'True'));
 
       expect(renamed.stdout).toContain('Plan: (unnamed) in BWT 3P');
     });
@@ -848,9 +864,9 @@ describe('PythonSession (real Pyodide)', () => {
     });
   });
 
-  describe('with an Active plan (the robot bridge rule: Active wins, else newest Ready)', () => {
+  describe('with an Active plan (the robot bridge rule: Active wins, else the most recently updated Ready)', () => {
     it('should fly the Active plan in the fly-mission example even when a Ready plan is newer', async () => {
-      // The Active plan is older than the newest Ready plan (demo-plan-followup) but must win.
+      // The Active plan is older-created AND older-updated than demo-plan-followup but must win.
       const followup = snapshot.plans.find((p) => p.externalId === 'demo-plan-followup')!;
       const active: InspectionPlan = {
         ...followup,
@@ -858,16 +874,171 @@ describe('PythonSession (real Pyodide)', () => {
         name: 'Active plan',
         status: 'Active',
         createdTime: followup.createdTime - 1_000_000,
+        lastUpdatedTime: followup.lastUpdatedTime - 1_000_000,
       };
-      const tasks = snapshot.tasks
-        .filter((t) => t.planExternalId === 'demo-plan-followup')
-        .map((t) => ({ ...t, externalId: t.externalId.replace('demo-plan-followup', 'active-plan'), planExternalId: 'active-plan' }));
-      session.setSnapshot({ ...snapshot, plans: [...snapshot.plans, active], tasks: [...snapshot.tasks, ...tasks] });
+      session.setSnapshot({
+        ...snapshot,
+        plans: [...snapshot.plans, active],
+        tasks: [...snapshot.tasks, ...clonedTasks(snapshot, 'active-plan')],
+      });
 
       const { outcome, missions } = await run(session, example('fly-mission'));
 
       expect(outcome).toEqual({ ok: true });
       expect(missions.at(-1)?.planExternalId).toBe('active-plan');
+    });
+
+    it('should fly the most recently updated Ready plan, not the most recently created', async () => {
+      // Created before demo-plan-followup but updated after it: the update time must decide.
+      const followup = snapshot.plans.find((p) => p.externalId === 'demo-plan-followup')!;
+      const updated: InspectionPlan = {
+        ...followup,
+        externalId: 'recently-updated',
+        name: 'Recently updated',
+        createdTime: followup.createdTime - 5_000,
+        lastUpdatedTime: followup.lastUpdatedTime + 5_000,
+      };
+      session.setSnapshot({
+        ...snapshot,
+        plans: [...snapshot.plans, updated],
+        tasks: [...snapshot.tasks, ...clonedTasks(snapshot, 'recently-updated')],
+      });
+
+      const { outcome, missions } = await run(session, example('fly-mission'));
+
+      expect(outcome).toEqual({ ok: true });
+      expect(missions.at(-1)?.planExternalId).toBe('recently-updated');
+    });
+  });
+
+  describe('simulated autoassess_bridge plan selection (the real bridge rule on /autoassess/*)', () => {
+    const SELECT_SETUP = [
+      'import json',
+      'from uidss import UidssClient',
+      'from dss_sandbox import SimDrone',
+      'from dss_sandbox.gbplanner import SimGbPlanner',
+      'UidssClient.from_env().plans.download("autoassess", "demo-plan-followup", "BWT 3P", "p.json")',
+      'sim_drone = SimDrone(speed_mps=1.0, max_flight_time_s=1800)',
+      'sim_drone.load_plan("p.json")',
+    ].join('\n');
+
+    it('should follow the most recently updated Active plan and warn when several are Active', async () => {
+      // Both Actives are updated before the newest Ready plan, and the newest-updated Active was
+      // created first: Active must beat Ready, and update time must beat creation time.
+      const followup = snapshot.plans.find((p) => p.externalId === 'demo-plan-followup')!;
+      const activeOld: InspectionPlan = {
+        ...followup,
+        externalId: 'active-old',
+        name: 'Active old',
+        status: 'Active',
+        createdTime: followup.createdTime + 10_000,
+        lastUpdatedTime: followup.lastUpdatedTime - 20_000,
+      };
+      const activeNew: InspectionPlan = {
+        ...followup,
+        externalId: 'active-new',
+        name: 'Active new',
+        status: 'Active',
+        createdTime: followup.createdTime - 10_000,
+        lastUpdatedTime: followup.lastUpdatedTime - 10_000,
+      };
+      session.setSnapshot({ ...snapshot, plans: [...snapshot.plans, activeOld, activeNew] });
+
+      const { stdout, outcome } = await run(
+        session,
+        [
+          SELECT_SETUP,
+          'ros = SimGbPlanner(sim_drone, verbose=False).ros',
+          'ids = []',
+          'ros.subscribe("/autoassess/plan_id", ids.append)',
+          'print("followed", ids[0].data)',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('followed active-new');
+      expect(stdout).toContain(
+        '[autoassess_bridge] 2 Active plans (active-old, active-new) although the viewer keeps '
+          + 'at most one per area; following the most recently updated',
+      );
+    });
+
+    it('should follow only the plan named by plan_name', async () => {
+      const { stdout, outcome } = await run(
+        session,
+        [
+          SELECT_SETUP,
+          'ros = SimGbPlanner(sim_drone, verbose=False, plan_name="NDT sweep – port side").ros',
+          'ids, plans = [], []',
+          'ros.subscribe("/autoassess/plan_id", ids.append)',
+          'ros.subscribe("/autoassess/plan", plans.append)',
+          'print("followed", ids[0].data, len(json.loads(plans[0].data)["tasks"]))',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      // Without the override the newest Ready plan (demo-plan-followup) would win.
+      expect(stdout).toContain('followed demo-plan-ndt-sweep 6');
+    });
+
+    it('should relay nothing and warn on every poll when no Ready or Active plan has the name', async () => {
+      // "Hold 2 visual" exists in the demo data but is Complete: never followed.
+      const { stdout, outcome } = await run(
+        session,
+        [
+          SELECT_SETUP,
+          'ros = SimGbPlanner(sim_drone, verbose=False, plan_name="Hold 2 visual").ros',
+          'msgs = []',
+          'ros.subscribe("/autoassess/plan", msgs.append)',
+          'ros.subscribe("/autoassess/plan_id", msgs.append)',
+          'print("delivered", len(msgs))',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      expect(stdout).toContain('delivered 0');
+      const warnings =
+        stdout.match(/\[autoassess_bridge\] No Ready or Active plan named 'Hold 2 visual' — relaying nothing/g) ?? [];
+      expect(warnings).toHaveLength(2); // one per poll (every latched subscribe)
+    });
+
+    it('should warn and follow the most recently updated when several Ready or Active plans share the name', async () => {
+      const followup = snapshot.plans.find((p) => p.externalId === 'demo-plan-followup')!;
+      const activeSweep: InspectionPlan = {
+        ...followup,
+        externalId: 'active-sweep',
+        name: 'Sweep',
+        status: 'Active',
+        lastUpdatedTime: followup.lastUpdatedTime - 10_000,
+      };
+      const readySweep: InspectionPlan = {
+        ...followup,
+        externalId: 'ready-sweep',
+        name: 'Sweep',
+        status: 'Ready',
+        createdTime: followup.createdTime - 10_000,
+        lastUpdatedTime: followup.lastUpdatedTime + 10_000,
+      };
+      session.setSnapshot({ ...snapshot, plans: [...snapshot.plans, activeSweep, readySweep] });
+
+      const { stdout, outcome } = await run(
+        session,
+        [
+          SELECT_SETUP,
+          'ros = SimGbPlanner(sim_drone, verbose=False, plan_name="Sweep").ros',
+          'ids = []',
+          'ros.subscribe("/autoassess/plan_id", ids.append)',
+          'print("followed", ids[0].data)',
+        ].join('\n'),
+      );
+
+      expect(outcome).toEqual({ ok: true });
+      // In the plan_name branch Active does not beat Ready: the most recently updated wins.
+      expect(stdout).toContain('followed ready-sweep');
+      expect(stdout).toContain(
+        "[autoassess_bridge] 2 Ready or Active plans named 'Sweep' (active-sweep, ready-sweep); "
+          + 'following the most recently updated',
+      );
     });
   });
 });
@@ -893,4 +1064,15 @@ function example(id: string): string {
   const found = STARTER_EXAMPLES.find((e) => e.id === id);
   if (!found) throw new Error(`no example ${id}`);
   return found.code;
+}
+
+/** demo-plan-followup's tasks cloned onto another plan, so that plan is flyable. */
+function clonedTasks(snapshot: SandboxSnapshot, planExternalId: string): InspectionTask[] {
+  return snapshot.tasks
+    .filter((t) => t.planExternalId === 'demo-plan-followup')
+    .map((t) => ({
+      ...t,
+      externalId: t.externalId.replace('demo-plan-followup', planExternalId),
+      planExternalId,
+    }));
 }

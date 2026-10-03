@@ -94,6 +94,7 @@ function plan(
     areaExternalId: area,
     status,
     createdTime: Date.parse(created),
+    lastUpdatedTime: Date.parse(created), // demo plans were never edited after creation
     name,
     description,
     mapExternalId: `demo-campaign-${area}`,

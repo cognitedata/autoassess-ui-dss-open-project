@@ -208,10 +208,12 @@ print(sim_gbplanner.report().summary())
   convert, `quaternion_from_euler` / `euler_from_quaternion` work like `tf.transformations`. ROS
   pitch is nose-down positive, the sandbox `Pose.pitch` is camera elevation, so
   **ROS pitch = −`Pose.pitch`**.
-- **`SimGbPlanner(sim_drone, config="bwt_inspection" | "cave_exploration", seed=0, verbose=True)`**
+- **`SimGbPlanner(sim_drone, config="bwt_inspection" | "cave_exploration", seed=0, verbose=True,
+  plan_name=None)`**
   needs a loaded plan (the area). `.ros`, `.drone`, `.mode`, `.config`, `.synthetic_tank`,
   `.status()` (a `planner_msgs.PlannerStatus`, sandbox convenience), `.report()`. With
-  `verbose=True` the planner's log prints as `[gbplanner] ...` lines.
+  `verbose=True` the planner's log prints as `[gbplanner] ...` lines. `plan_name` is the
+  simulated autoassess_bridge's plan override (see the next section).
 - **`report()`** → `GbPlannerReport(config, mode, iterations, explored_pct, surface_coverage_pct,
   distance_m, duration_s, viewpoints, covered_tasks, uncovered_tasks, voxel_resolution_m, voxels,
   synthetic_tank)`, `.summary()`. `covered_tasks` maps plan task ids to the simulated time the
@@ -266,14 +268,19 @@ included.
 ### Simulated autoassess_bridge (`/autoassess/*`)
 
 On the robot, AutoAssess is reached through the **autoassess_bridge** ROS node
-(`gbplanner_ros/autoassess_bridge`): it follows the newest Ready plan in CDF and publishes it
-latched, buffers findings from the detection stack, and at mission end uploads the mission and
-reports progress. `sim_gbplanner.ros` answers the same topics in the browser, fed from the plan
-loaded into `sim_drone` (see starter example 7):
+(`gbplanner_ros/autoassess_bridge`): it follows one plan in CDF — the most recently updated
+**Active** plan, else the most recently updated **Ready** plan (update-time ties broken by
+creation time; Draft/Complete never followed; the `plan_name` launch parameter narrows this to
+the Ready or Active plan with exactly that name) — and publishes it latched, buffers findings
+from the detection stack, and at mission end uploads the mission and reports progress.
+`sim_gbplanner.ros` answers the same topics in the browser: the plan topics re-select the
+followed plan from the data snapshot with the same rule (`SimGbPlanner(..., plan_name=...)`
+mirrors the override), while the mission itself follows the plan loaded into `sim_drone` (see
+starter example 7):
 
 | Sandbox call | Real autoassess_bridge behaviour | Type |
 |---|---|---|
-| `ros.subscribe("/autoassess/plan", cb)` | latched plan.json of the newest Ready plan (`dss plan download` text). Sandbox: the plan loaded with `sim_drone.load_plan(plan)`, re-serialised | `std_msgs/String` |
+| `ros.subscribe("/autoassess/plan", cb)` | latched plan.json of the followed plan (`dss plan download` text; most recently updated Active, else Ready, or the `plan_name` match). Sandbox: re-selected from the data snapshot on every subscribe | `std_msgs/String` |
 | `ros.subscribe("/autoassess/plan_id", cb)` | latched plan externalId | `std_msgs/String` |
 | `ros.subscribe("/autoassess/inspection_targets", cb)` | latched: one inspection pose per task in task order (region: `standoff_m` 0.8 out along the normal; element: 0.8 above the centre looking down; tasks without a target left out and logged) | `geometry_msgs/PoseArray` |
 | `ros.publish("/autoassess/findings", msg)` | JSON, one object or an array: `x, y, z` required; `id` (no `+`, ≤ 200 chars, default = a hash, deduped first-wins), `nx, ny, nz` (all or none, non-zero), `radius` (> 0), `inspection_type` (`visual` \| `ndt_thickness`), `class`, `confidence` (0..1), `description`. Bad entries are skipped and logged (once per distinct error), good ones buffered for the mission. Sandbox nicety: a plain dict / list is accepted too | `std_msgs/String` |
@@ -283,9 +290,9 @@ loaded into `sim_drone` (see starter example 7):
 Limitations of the twin: nothing is uploaded and no campaign or defect nodes are written to CDF
 (the campaign/defect ids exist only in the status JSON); `/ballast_tank/pointcloud` (the
 reference map) and the global-bound push from the real node are not simulated (example 5 sets
-the bound itself); the plan topics deliver on subscribe but are not re-published if another plan
-is loaded later; `cdfFileIds` stay empty and `updatedAt` is simulated flight seconds, not wall
-time. A mission ends at `sim_drone.land()` (the real node detects homing + stillness on
+the bound itself); the plan topics re-select the followed plan on subscribe but are not
+re-published when the data changes later (the real node polls and re-publishes); `cdfFileIds`
+stay empty and `updatedAt` is simulated flight seconds, not wall time. A mission ends at `sim_drone.land()` (the real node detects homing + stillness on
 odometry); each take-off starts a new mission (`mission-001`, `mission-002`, …).
 
 ### Simulator model
@@ -313,7 +320,8 @@ and the UI animation come from the same computation.
 2. **Verify a plan:** downloads every `plan.json` and checks that every task has a pose, targets are
    inside the area bounds, and normals are unit length. It also counts tasks by type. In demo mode
    the Draft plan fails 3 checks.
-3. **Fly the mission:** picks the newest Ready plan, downloads it, flies it with
+3. **Fly the mission:** picks the plan the robot bridge would fly (an Active plan first, else
+   the most recently updated Ready plan), downloads it, flies it with
    `sim_drone = SimDrone(); sim_drone.fly_plan(plan)` (nearest-neighbour order), prints the events
    and the summary, and marks the plan Complete with `client.plans.update_status(...)`
    (simulated, nothing is written to CDF).

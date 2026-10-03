@@ -122,6 +122,7 @@ interface Props {
   space: string;
   externalId: string;
   createdTime: number;
+  lastUpdatedTime: number;
   p: Record<string, unknown>;
 }
 
@@ -131,6 +132,7 @@ function toProps(item: Item, view: ViewRef): Props {
     space: item.space,
     externalId: item.externalId,
     createdTime: item.createdTime,
+    lastUpdatedTime: item.lastUpdatedTime,
     p: (group ?? {}) as Record<string, unknown>,
   };
 }
@@ -158,7 +160,7 @@ const TASK_KINDS = new Set<string>(['element', 'region']);
 const INSPECTION_TYPES = new Set<string>(['visual', 'ndt_thickness']);
 const ELEMENT_TYPES = new Set<string>(['manhole', 'longitudinal', 'wall', 'compartment']);
 
-function mapPlan({ space, externalId, createdTime, p }: Props): InspectionPlan {
+function mapPlan({ space, externalId, createdTime, lastUpdatedTime, p }: Props): InspectionPlan {
   const status = str(p['status']) ?? 'Draft';
   return {
     space,
@@ -166,6 +168,7 @@ function mapPlan({ space, externalId, createdTime, p }: Props): InspectionPlan {
     areaExternalId: refId(p['area']) ?? '',
     status: (PLAN_STATUSES.has(status) ? status : 'Draft') as PlanStatus,
     createdTime,
+    lastUpdatedTime,
     name: str(p['name']) || null,
     description: str(p['description']) || null,
     mapExternalId: refId(p['map']),

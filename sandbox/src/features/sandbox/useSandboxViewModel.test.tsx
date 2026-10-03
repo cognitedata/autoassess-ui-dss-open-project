@@ -281,6 +281,7 @@ const READY_PLAN: InspectionPlan = {
   areaExternalId: 'a',
   status: 'Ready',
   createdTime: 0,
+  lastUpdatedTime: 0,
   name: 'P1',
   description: null,
   mapExternalId: null,

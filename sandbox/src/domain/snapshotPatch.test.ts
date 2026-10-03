@@ -28,7 +28,7 @@ describe(patchPlan.name, () => {
 });
 
 function plan(externalId: string, status: InspectionPlan['status']): InspectionPlan {
-  return { space: 's', externalId, areaExternalId: 'a', status, createdTime: 0, name: null, description: null, mapExternalId: null };
+  return { space: 's', externalId, areaExternalId: 'a', status, createdTime: 0, lastUpdatedTime: 0, name: null, description: null, mapExternalId: null };
 }
 
 function snapshotWith(plans: InspectionPlan[]): SandboxSnapshot {
