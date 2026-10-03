@@ -157,6 +157,7 @@ const READY: InspectionPlan = {
   areaExternalId: 'a',
   status: 'Ready',
   createdTime: 0,
+  lastUpdatedTime: 0,
   name: 'Tank test',
   description: null,
   mapExternalId: null,

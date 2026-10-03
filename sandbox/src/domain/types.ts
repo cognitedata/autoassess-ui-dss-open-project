@@ -38,6 +38,8 @@ export interface InspectionPlan {
   status: PlanStatus;
   /** Unix epoch milliseconds. */
   createdTime: number;
+  /** Unix epoch milliseconds. */
+  lastUpdatedTime: number;
   name: string | null;
   description: string | null;
   mapExternalId: string | null;

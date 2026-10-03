@@ -119,6 +119,17 @@ describe(createCdfSnapshotSource.name, () => {
     expect(snapshot.plans.map((p) => [p.externalId, p.status])).toEqual([['plan-active', 'Active']]);
   });
 
+  it('should map createdTime and lastUpdatedTime from the node system fields', async () => {
+    // The bridge's recency key is (lastUpdatedTime, createdTime): both must survive the mapping.
+    pages['InspectionPlanView'] = [
+      page([node('plan-edited', 'InspectionPlanView/4', { area: ref('area-1'), status: 'Ready' }, 1000, 5000)]),
+    ];
+
+    const snapshot = await createCdfSnapshotSource(reader).load();
+
+    expect(snapshot.plans[0]).toMatchObject({ externalId: 'plan-edited', createdTime: 1000, lastUpdatedTime: 5000 });
+  });
+
   it('should follow cursors, resolve element targets and drop tasks of unknown plans', async () => {
     const snapshot = await createCdfSnapshotSource(reader).load();
 
@@ -166,6 +177,7 @@ function node(
   viewKey: string,
   props: Record<string, unknown>,
   createdTime = 0,
+  lastUpdatedTime = createdTime,
 ): ListResponse['items'][number] {
   return {
     instanceType: 'node',
@@ -173,7 +185,7 @@ function node(
     externalId,
     version: 1,
     createdTime,
-    lastUpdatedTime: createdTime,
+    lastUpdatedTime,
     properties: { autoassess: { [viewKey]: props } },
   } as ListResponse['items'][number];
 }

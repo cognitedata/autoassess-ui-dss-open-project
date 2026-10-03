@@ -107,14 +107,29 @@ class SandboxPlanService:
 
     def download(self, space: str, external_id: str, area_name: str, output_path: Path) -> None:
         """Write plan.json to *output_path* (in the sandbox's in-memory filesystem)."""
-        raw = next((p for p in self._data["plans"] if p["externalId"] == external_id), None)
-        if raw is None:
-            raise ValueError(f"Plan '{external_id}' not found in CDF")
-        plan = _map_plan(raw)
-        payload = _build_plan_json(plan, area_name, self.list_tasks(external_id))
+        payload = build_plan_json(self._data, external_id, area_name=area_name)
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(json.dumps(payload, indent=2))
+
+
+def build_plan_json(
+    data: dict[str, Any], plan_external_id: str, area_name: str | None = None
+) -> dict[str, Any]:
+    """The plan.json dict for one snapshot plan (the layout `plans.download` writes).
+
+    `area_name`: looked up in the snapshot's areas when not given.
+    """
+    raw = next((p for p in data["plans"] if p["externalId"] == plan_external_id), None)
+    if raw is None:
+        raise ValueError(f"Plan '{plan_external_id}' not found in CDF")
+    plan = _map_plan(raw)
+    if area_name is None:
+        area_name = next(
+            (a["name"] for a in data["areas"] if a["externalId"] == plan.area_external_id), ""
+        )
+    tasks = [_map_task(t) for t in data["tasks"] if t["planExternalId"] == plan_external_id]
+    return _build_plan_json(plan, area_name, tasks)
 
 
 # ---------------------------------------------------------------------------
@@ -129,6 +144,7 @@ def _map_plan(p: dict[str, Any]) -> InspectionPlan:
         area_external_id=p["areaExternalId"],
         status=p["status"],
         created_time=int(p["createdTime"]),
+        last_updated_time=int(p["lastUpdatedTime"]),
         name=p.get("name"),
         description=p.get("description"),
         map_external_id=p.get("mapExternalId"),

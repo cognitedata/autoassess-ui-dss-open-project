@@ -79,8 +79,9 @@ from uidss import UidssClient
 
 client = UidssClient.from_env()
 
-# 1. The bridge's rule: an Active plan wins, else the newest Ready plan — with tasks, across all
-#    vessels/areas (the web app's "Set active" pins the plan the robot flies).
+# 1. The bridge's rule: an Active plan wins, else the most recently updated Ready plan (update
+#    time first, created time as tie-break) — with tasks, across all vessels/areas (the web
+#    app's "Set active" pins the plan the robot flies).
 candidates = [
     (area, p)
     for vessel in client.vessels.list()
@@ -92,7 +93,7 @@ counts = client.plans.count_tasks([p.external_id for _, p in candidates])
 candidates = [(area, p) for area, p in candidates if counts[p.external_id] > 0]
 if not candidates:
     raise SystemExit("No Active or Ready plan with tasks found. Add tasks to a plan and mark it Ready in the AutoAssess web app.")
-area, plan_meta = max(candidates, key=lambda c: (c[1].status == "Active", c[1].created_time))
+area, plan_meta = max(candidates, key=lambda c: (c[1].status == "Active", c[1].last_updated_time, c[1].created_time))
 
 # 2. Download plan.json, exactly as on the ground station.
 path = Path("plans") / f"{plan_meta.external_id}.json"
@@ -130,7 +131,8 @@ from uidss import UidssClient
 
 client = UidssClient.from_env()
 
-# The plan the robot bridge would fly: Active first, else newest Ready (same pick as example 3).
+# The plan the robot bridge would fly: Active first, else the most recently updated Ready plan
+# (same pick as example 3).
 candidates = [
     (area, p)
     for vessel in client.vessels.list()
@@ -142,7 +144,7 @@ counts = client.plans.count_tasks([p.external_id for _, p in candidates])
 candidates = [(area, p) for area, p in candidates if counts[p.external_id] > 0]
 if not candidates:
     raise SystemExit("No Active or Ready plan with tasks found.")
-area, plan_meta = max(candidates, key=lambda c: (c[1].status == "Active", c[1].created_time))
+area, plan_meta = max(candidates, key=lambda c: (c[1].status == "Active", c[1].last_updated_time, c[1].created_time))
 path = Path("plans") / f"{plan_meta.external_id}.json"
 client.plans.download(plan_meta.space, plan_meta.external_id, area.name, path)
 plan = json.loads(path.read_text())
@@ -178,7 +180,8 @@ print(f"state={sim_drone.state}  flight time={sim_drone.flight_time_s:.0f} s  di
 
 const PICK_PLAN = `client = UidssClient.from_env()
 
-# The plan the robot bridge would fly: Active first, else newest Ready (same pick as example 3).
+# The plan the robot bridge would fly: Active first, else the most recently updated Ready plan
+# (same pick as example 3).
 candidates = [
     (area, p)
     for vessel in client.vessels.list()
@@ -190,7 +193,7 @@ counts = client.plans.count_tasks([p.external_id for _, p in candidates])
 candidates = [(area, p) for area, p in candidates if counts[p.external_id] > 0]
 if not candidates:
     raise SystemExit("No Active or Ready plan with tasks found.")
-area, plan_meta = max(candidates, key=lambda c: (c[1].status == "Active", c[1].created_time))
+area, plan_meta = max(candidates, key=lambda c: (c[1].status == "Active", c[1].last_updated_time, c[1].created_time))
 path = Path("plans") / f"{plan_meta.external_id}.json"
 client.plans.download(plan_meta.space, plan_meta.external_id, area.name, path)
 plan = json.loads(path.read_text())
@@ -332,8 +335,9 @@ from uidss import UidssClient
 
 ${PICK_PLAN}
 
-# The sandbox needs the plan loaded; the real bridge picks its plan by itself (Active first,
-# else the newest Ready plan).
+# The bridge picks its plan by itself: the most recently updated Active plan, else the most
+# recently updated Ready plan (SimGbPlanner's plan_name= narrows it to one plan name, like the
+# real node's override). The sandbox still loads the plan into sim_drone to fly it.
 sim_drone = SimDrone(speed_mps=1.0, max_flight_time_s=1800)
 issues = sim_drone.load_plan(plan)
 for issue in issues:                          # blocked tasks are visible up front

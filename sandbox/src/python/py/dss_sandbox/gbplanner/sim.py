@@ -238,6 +238,10 @@ class SimGbPlanner:
     config: "bwt_inspection" (explore, inspect the mapped surfaces, go home) or
     "cave_exploration" (explore, go home). seed: the planner's random sampling is deterministic.
     verbose: print the planner's log lines ("[gbplanner] ...") like a ROS node would.
+    plan_name: the simulated autoassess_bridge's plan override (the real node's `plan_name`
+    launch parameter): its /autoassess/* plan topics then relay only the Ready or Active plan
+    with exactly that name; None (the default) follows the most recently updated Active plan,
+    else the most recently updated Ready plan.
     """
 
     def __init__(
@@ -246,13 +250,14 @@ class SimGbPlanner:
         config: str = "bwt_inspection",
         seed: int = 0,
         verbose: bool = True,
+        plan_name: str | None = None,
     ) -> None:
         if not isinstance(sim_drone, SimDrone):
             raise TypeError("SimGbPlanner(sim_drone) expects the SimDrone that it should fly")
         self._drone = sim_drone
         self._verbose = verbose
         self._ros = SimRos(self)
-        self._autoassess = SimAutoassessBridge(sim_drone, self._ros._deliver_local)
+        self._autoassess = SimAutoassessBridge(sim_drone, self._ros._deliver_local, plan_name=plan_name)
         info = self._bridge("gb_new", {"config": config, "seed": int(seed)})
         self.config: str = info["config"]
         self.synthetic_tank: str = info["tank"]

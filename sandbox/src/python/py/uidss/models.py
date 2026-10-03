@@ -35,6 +35,9 @@ class InspectionPlan:
     area_external_id: str
     status: PlanStatus
     created_time: int  # Unix epoch milliseconds
+    # Node system field: when the plan was last edited. The robot bridge's recency key is
+    # (last_updated_time, created_time).
+    last_updated_time: int  # Unix epoch milliseconds
     name: str | None = None
     description: str | None = None
     # externalId of the InspectionResult (campaign) this plan's task coordinates
