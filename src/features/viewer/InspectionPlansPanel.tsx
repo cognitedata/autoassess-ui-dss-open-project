@@ -1,5 +1,15 @@
 import { useState } from 'react';
-import { Button, Badge, Loader } from '@cognite/aura/components';
+import {
+  Button,
+  Badge,
+  Loader,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@cognite/aura/components';
 import { IconPlus, IconChevronLeft, IconTrash, IconPencil } from '@tabler/icons-react';
 import type { InspectionPlansViewModel } from './useInspectionPlansViewModel';
 import type { InspectionPlan } from './InspectionPlanService';
@@ -131,6 +141,15 @@ function PlanListView({
   isTogglingStatus,
 }: PlanListViewProps) {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
+  const [planPendingActivation, setPlanPendingActivation] = useState<InspectionPlan | null>(null);
+
+  const handleSetActive = (plan: InspectionPlan) => {
+    if (plan.mapExternalId === null) {
+      setPlanPendingActivation(plan);
+    } else {
+      onSetPlanActive(plan);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-3 p-4">
@@ -179,14 +198,60 @@ function PlanListView({
               plan={plan}
               onSelect={onSelectPlan}
               isRobotPlan={plan.externalId === robotPlanExternalId}
-              onSetActive={onSetPlanActive}
+              onSetActive={handleSetActive}
               onSetInactive={onSetPlanInactive}
               isTogglingStatus={isTogglingStatus}
             />
           ))}
         </ul>
       )}
+
+      <NoMapActivateConfirmDialog
+        plan={planPendingActivation}
+        onOpenChange={(open) => {
+          if (!open) setPlanPendingActivation(null);
+        }}
+        isActivating={isTogglingStatus}
+        onConfirm={() => {
+          if (planPendingActivation) onSetPlanActive(planPendingActivation);
+          setPlanPendingActivation(null);
+        }}
+      />
     </div>
+  );
+}
+
+function NoMapActivateConfirmDialog({
+  plan,
+  onOpenChange,
+  isActivating,
+  onConfirm,
+}: {
+  plan: InspectionPlan | null;
+  onOpenChange(open: boolean): void;
+  isActivating: boolean;
+  onConfirm(): void;
+}) {
+  return (
+    <Dialog open={plan !== null} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Set plan active?</DialogTitle>
+          <DialogDescription>
+            <span className="font-medium">{plan ? formatPlanLabel(plan) : ''}</span> has no 3D map
+            attached. The robot will fly without a reference map. Set active anyway?
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={isActivating}>
+            Cancel
+          </Button>
+          <Button onClick={onConfirm} disabled={isActivating}>
+            {isActivating ? 'Activating…' : 'Set active anyway'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -214,6 +279,16 @@ function PlanRow({
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <span className="truncate text-sm">{label}</span>
         <PlanStatusBadge status={plan.status} />
+        {plan.mapExternalId === null && (
+          <Badge
+            variant="gray"
+            outline
+            title="This plan has no 3D reference map attached — expected for first-mapping flights."
+            aria-label="Plan has no 3D map"
+          >
+            No map
+          </Badge>
+        )}
         {isRobotPlan && (
           <Badge variant="sky" outline title={ROBOT_RULE_TOOLTIP} aria-label="Will be sent to robot">
             → robot
