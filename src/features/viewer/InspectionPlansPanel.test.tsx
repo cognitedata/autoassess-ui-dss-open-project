@@ -207,6 +207,59 @@ describe(InspectionPlansPanel.name, () => {
       renderPanel(makeViewModel({ plans: [draft], robotPlanExternalId: null }));
       expect(screen.queryByText(/robot/i)).toBeNull();
     });
+
+    describe('no-map guard', () => {
+      it('shows a "no map" hint only on plans without a map', () => {
+        const mapless = createMockInspectionPlan({
+          externalId: 'plan-mapless',
+          name: 'Mapless plan',
+          mapExternalId: null,
+        });
+        const mapped = createMockInspectionPlan({
+          externalId: 'plan-mapped',
+          name: 'Mapped plan',
+        });
+        renderPanel(makeViewModel({ plans: [mapless, mapped] }));
+        expect(screen.getAllByText(/no map/i)).toHaveLength(1);
+        expect(screen.getByText(/no map/i).closest('li')?.textContent).toContain('Mapless plan');
+      });
+
+      it('asks for confirmation before activating a plan without a map', async () => {
+        const setPlanActive = vi.fn();
+        const plan = createMockInspectionPlan({ status: 'Ready', mapExternalId: null });
+        renderPanel(makeViewModel({ plans: [plan], setPlanActive }));
+        await userEvent.click(screen.getByRole('button', { name: /set plan .* active/i }));
+        expect(screen.getByText(/no 3d map attached/i)).toBeDefined();
+        expect(setPlanActive).not.toHaveBeenCalled();
+      });
+
+      it('activates the plan when the no-map confirmation is confirmed', async () => {
+        const setPlanActive = vi.fn();
+        const plan = createMockInspectionPlan({ status: 'Ready', mapExternalId: null });
+        renderPanel(makeViewModel({ plans: [plan], setPlanActive }));
+        await userEvent.click(screen.getByRole('button', { name: /set plan .* active/i }));
+        await userEvent.click(screen.getByRole('button', { name: /set active anyway/i }));
+        expect(setPlanActive).toHaveBeenCalledWith(plan);
+      });
+
+      it('does not activate the plan when the no-map confirmation is cancelled', async () => {
+        const setPlanActive = vi.fn();
+        const plan = createMockInspectionPlan({ status: 'Ready', mapExternalId: null });
+        renderPanel(makeViewModel({ plans: [plan], setPlanActive }));
+        await userEvent.click(screen.getByRole('button', { name: /set plan .* active/i }));
+        await userEvent.click(screen.getByRole('button', { name: /cancel/i }));
+        expect(setPlanActive).not.toHaveBeenCalled();
+      });
+
+      it('activates a plan with a map immediately without any confirmation', async () => {
+        const setPlanActive = vi.fn();
+        const plan = createMockInspectionPlan({ status: 'Ready' });
+        renderPanel(makeViewModel({ plans: [plan], setPlanActive }));
+        await userEvent.click(screen.getByRole('button', { name: /set plan .* active/i }));
+        expect(screen.queryByText(/no 3d map attached/i)).toBeNull();
+        expect(setPlanActive).toHaveBeenCalledWith(plan);
+      });
+    });
   });
 
   describe('active plan view', () => {
