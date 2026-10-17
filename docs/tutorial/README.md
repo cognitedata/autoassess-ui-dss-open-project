@@ -23,6 +23,7 @@ The repo has two halves that meet in CDF:
 | 6 | [Track C — Analysis on CDF data](06-analysis-on-cdf-data.md) | Perception / ML / analysis partners | 1–2 h |
 | 7 | [End-to-end exercise](07-end-to-end-exercise.md) | Everyone (in mixed teams) | 1–2 h |
 | 8 | [Gotchas, etiquette & FAQ](08-gotchas-and-faq.md) | Everyone — **read before day 1** | 10 min |
+| 9 | [D6.2 data in the UI (with pictures)](09-d62-data-in-the-ui.md) | WP6 partners & anyone uploading mapping data | 15 min |
 
 ### Suggested paths
 
