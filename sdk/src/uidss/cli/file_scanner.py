@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+from uidss.threed.ply import is_point_cloud_ply
 
 
 @dataclass(frozen=True)
 class ScannedFiles:
-    ply_files: list[Path]
+    ply_files: list[Path]  # triangle-mesh PLYs
     pcd_files: list[Path]
     csv_files: list[Path]
     ssg_yaml: Path | None
     metrics_yaml: Path | None
     tum_dataset: Path | None
+    point_cloud_ply_files: list[Path] = field(default_factory=list)  # vertex-only PLYs
     ssg_yaml_candidates: tuple[Path, ...] = ()
     metrics_yaml_candidates: tuple[Path, ...] = ()
     tum_dataset_candidates: tuple[Path, ...] = ()
@@ -25,6 +28,10 @@ class ScannedFiles:
     @property
     def has_pcd(self) -> bool:
         return bool(self.pcd_files)
+
+    @property
+    def has_point_cloud_ply(self) -> bool:
+        return bool(self.point_cloud_ply_files)
 
     @property
     def has_csv(self) -> bool:
@@ -61,10 +68,21 @@ def scan_folder(folder: Path) -> ScannedFiles:
     """Recursively find .ply, .pcd, .csv, ssg.yaml, metrics.yaml and TUM datasets under *folder*.
 
     ssg.yaml is identified by name; metadata.yaml and calibration yamls are excluded.
+    Each .ply is classified by peeking its header: a ``face`` element with count > 0 makes
+    it a mesh (``ply_files``), otherwise it is a vertex-only point cloud
+    (``point_cloud_ply_files``, uploaded via the PCD path). An unreadable .ply stays in
+    ``ply_files`` so the failure surfaces at upload time instead of being dropped.
     When more than one ssg.yaml/metrics.yaml/TUM dataset candidate is found, the sorted-first
     one is used and the rest are surfaced via missing_type_notes() rather than silently dropped.
     """
-    ply_files: list[Path] = sorted(folder.rglob("*.ply"))
+    ply_files: list[Path] = []
+    point_cloud_ply_files: list[Path] = []
+    for ply in sorted(folder.rglob("*.ply")):
+        try:
+            point_cloud = is_point_cloud_ply(ply)
+        except (ValueError, OSError):
+            point_cloud = False
+        (point_cloud_ply_files if point_cloud else ply_files).append(ply)
     pcd_files: list[Path] = sorted(folder.rglob("*.pcd"))
     csv_files: list[Path] = sorted(folder.rglob("*.csv"))
     ssg_candidates = sorted(folder.rglob("ssg.yaml"))
@@ -80,6 +98,7 @@ def scan_folder(folder: Path) -> ScannedFiles:
         ssg_yaml=ssg_yaml,
         metrics_yaml=metrics_yaml,
         tum_dataset=tum_dataset,
+        point_cloud_ply_files=point_cloud_ply_files,
         ssg_yaml_candidates=tuple(ssg_candidates),
         metrics_yaml_candidates=tuple(metrics_candidates),
         tum_dataset_candidates=tuple(tum_candidates),
@@ -91,9 +110,9 @@ def missing_type_notes(scanned: ScannedFiles) -> list[str]:
     about ambiguous matches and pointers to artifact types this command doesn't handle."""
     notes: list[str] = []
     if not scanned.has_ply:
-        notes.append("No .ply file found — PLY mesh will not be uploaded.")
-    if not scanned.has_pcd:
-        notes.append("No .pcd file found — point clouds will not be uploaded.")
+        notes.append("No mesh .ply file found — PLY mesh will not be uploaded.")
+    if not scanned.has_pcd and not scanned.has_point_cloud_ply:
+        notes.append("No .pcd or point-cloud .ply file found — point clouds will not be uploaded.")
     if not scanned.has_csv:
         notes.append("No .csv file found — UTM measurements will not be uploaded.")
     if not scanned.has_ssg:

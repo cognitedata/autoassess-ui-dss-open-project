@@ -42,6 +42,14 @@ class PlyMesh:
     face_rgb: npt.NDArray[np.uint8] | None = None  # (F, 3) segment colours
 
 
+@dataclass(frozen=True)
+class PlyPointCloud:
+    """A vertex-only PLY (e.g. D6.2's ``ut_measurements_colored.ply``) — no faces."""
+
+    positions: npt.NDArray[np.float32]  # (N, 3)
+    rgb: npt.NDArray[np.uint8] | None = None  # (N, 3)
+
+
 @dataclass
 class _Element:
     name: str
@@ -51,14 +59,10 @@ class _Element:
 
 
 def read_ply(path: Path) -> PlyMesh:
+    """Read a triangle-mesh PLY. Raises ValueError for a vertex-only (point-cloud) PLY —
+    use :func:`read_ply_pointcloud` for those; :func:`is_point_cloud_ply` tells them apart."""
     data = path.read_bytes()
-    marker = data.find(b"end_header")
-    if not data.startswith(b"ply") or marker < 0:
-        raise ValueError(f"{path} is not a PLY file")
-    body_start = data.index(b"\n", marker) + 1
-    fmt, elements = _parse_header(data[:marker].decode("ascii", errors="replace"))
-    if fmt not in ("ascii", "binary_little_endian"):
-        raise ValueError(f"unsupported PLY format {fmt!r} (big_endian is not supported)")
+    fmt, elements, body_start = _load_header(data, path)
 
     vertex = _find(elements, "vertex")
     face = _find(elements, "face")
@@ -83,6 +87,72 @@ def read_ply(path: Path) -> PlyMesh:
         vertex_rgb=_rgb(v),
         face_rgb=_rgb(f),
     )
+
+
+def read_ply_pointcloud(path: Path) -> PlyPointCloud:
+    """Read the vertex element of a PLY as a point cloud (positions + optional RGB).
+
+    Meant for vertex-only PLYs such as D6.2's ``ut_measurements_colored.ply``; any face
+    element is ignored, so this can never feed the mesh/CAD-model pipeline.
+    """
+    data = path.read_bytes()
+    fmt, elements, body_start = _load_header(data, path)
+    vertex = _find(elements, "vertex")
+
+    if fmt == "ascii":
+        body = np.frombuffer(data, dtype=np.uint8, offset=body_start)
+        newlines = np.flatnonzero(body == ord("\n"))
+        if len(newlines) < vertex.count:
+            raise ValueError(
+                f"PLY is truncated: header says {vertex.count} vertices, "
+                f"file has {len(newlines)} rows"
+            )
+        split = int(newlines[vertex.count - 1]) + 1 if vertex.count else 0
+        rows = np.fromstring(data[body_start : body_start + split].decode("ascii"), sep=" ")
+        if rows.size != vertex.count * len(vertex.scalars):
+            raise ValueError(f"{path}: vertex rows have unexpected width")
+        table = rows.reshape(vertex.count, len(vertex.scalars))
+        v: dict[str, npt.NDArray[np.generic]] = {
+            name: table[:, i] for i, (name, _) in enumerate(vertex.scalars)
+        }
+    else:
+        vertex_dtype = np.dtype([(name, "<" + code) for name, code in vertex.scalars])
+        expected = body_start + vertex.count * vertex_dtype.itemsize
+        if len(data) < expected:
+            raise ValueError(f"PLY is truncated: {len(data)} bytes, header needs {expected}")
+        vertices = np.frombuffer(data, dtype=vertex_dtype, count=vertex.count, offset=body_start)
+        v = {name: vertices[name] for name, _ in vertex.scalars}
+
+    positions = np.stack([v["x"], v["y"], v["z"]], axis=1).astype(np.float32)
+    return PlyPointCloud(positions=positions, rgb=_rgb(v))
+
+
+def is_point_cloud_ply(path: Path) -> bool:
+    """True when the PLY header has no ``face`` element (or an empty one).
+
+    Peeks only at the header. Raises ValueError when *path* is not a parseable PLY.
+    """
+    with path.open("rb") as handle:
+        head = handle.read(_HEADER_PEEK)
+    _fmt, elements, _body_start = _load_header(head, path)
+    _find(elements, "vertex")
+    face = next((e for e in elements if e.name == "face"), None)
+    return face is None or face.count == 0
+
+
+_HEADER_PEEK = 64 * 1024  # a PLY header is tiny; 64 KiB is far more than enough
+
+
+def _load_header(data: bytes, path: Path) -> tuple[str, list[_Element], int]:
+    """Validate the magic/format and parse the header; returns (format, elements, body start)."""
+    marker = data.find(b"end_header")
+    if not data.startswith(b"ply") or marker < 0:
+        raise ValueError(f"{path} is not a PLY file")
+    body_start = data.index(b"\n", marker) + 1
+    fmt, elements = _parse_header(data[:marker].decode("ascii", errors="replace"))
+    if fmt not in ("ascii", "binary_little_endian"):
+        raise ValueError(f"unsupported PLY format {fmt!r} (big_endian is not supported)")
+    return fmt, elements, body_start
 
 
 def _parse_header(header: str) -> tuple[str, list[_Element]]:
