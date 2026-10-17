@@ -7,9 +7,11 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
+import numpy as np
 import pytest
 from cognite.client.data_classes.data_modeling.cdm.v1 import CogniteFileApply
 from cognite.client.data_classes.data_modeling.instances import NodeApply
+from structlog.testing import capture_logs
 
 from uidss.cdf.data_model import DRONE_IMAGE_VIEW, SPACE, view_key
 from uidss.services.drone_image_service import (
@@ -19,8 +21,10 @@ from uidss.services.drone_image_service import (
     _parse_groundtruth,
     _parse_rgb_txt,
     _PoseEntry,
+    parse_intrinsics_txt,
     parse_sensor_yaml,
 )
+from uidss.threed.png import write_png
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "drone_images"
 SENSOR_YAML = FIXTURES / "sensor.yaml"
@@ -74,6 +78,96 @@ class TestParseSensorYaml:
         )
         with pytest.raises(ValueError, match="16"):
             parse_sensor_yaml(p)
+
+
+# ---------------------------------------------------------------------------
+# parse_intrinsics_txt
+# ---------------------------------------------------------------------------
+
+SHIP_CH_INTRINSICS = "390.598938   0   320.0\n0   390.598938   240.0\n0   0   1\n"
+
+
+class TestParseIntrinsicsTxt:
+    def _write(self, tmp_path: Path, text: str) -> Path:
+        p = tmp_path / "intrinsics.txt"
+        p.write_text(text)
+        return p
+
+    def test_parses_ship_ch_matrix(self, tmp_path: Path) -> None:
+        cfg = parse_intrinsics_txt(self._write(tmp_path, SHIP_CH_INTRINSICS), (640, 480))
+        assert cfg.fx == pytest.approx(390.598938)
+        assert cfg.fy == pytest.approx(390.598938)
+        assert cfg.cx == pytest.approx(320.0)
+        assert cfg.cy == pytest.approx(240.0)
+
+    def test_image_size_passed_through(self, tmp_path: Path) -> None:
+        cfg = parse_intrinsics_txt(self._write(tmp_path, SHIP_CH_INTRINSICS), (752, 566))
+        assert cfg.width == 752
+        assert cfg.height == 566
+
+    def test_identity_t_bs(self, tmp_path: Path) -> None:
+        cfg = parse_intrinsics_txt(self._write(tmp_path, SHIP_CH_INTRINSICS), (640, 480))
+        # fmt: off
+        assert cfg.t_bs == [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+        # fmt: on
+
+    def test_default_near_far_planes(self, tmp_path: Path) -> None:
+        cfg = parse_intrinsics_txt(self._write(tmp_path, SHIP_CH_INTRINSICS), (640, 480))
+        assert cfg.near_plane == pytest.approx(0.4)
+        assert cfg.far_plane == pytest.approx(35.0)
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # tabs
+            "390.5\t0\t320.0\n0\t390.5\t240.0\n0\t0\t1\n",
+            # leading/trailing whitespace and blank lines
+            "\n  390.5 0 320.0  \n\n 0 390.5 240.0\n0 0 1\n\n",
+            # single spaces, integer focal lengths
+            "390 0 320\n0 390 240\n0 0 1",
+            # scientific notation
+            "3.905e2 0 3.2e2\n0 3.905e2 2.4e2\n0 0 1.0\n",
+        ],
+        ids=["tabs", "blank-lines", "single-space", "scientific"],
+    )
+    def test_tolerates_whitespace_and_number_formats(self, tmp_path: Path, text: str) -> None:
+        cfg = parse_intrinsics_txt(self._write(tmp_path, text), (640, 480))
+        assert cfg.fx > 0
+        assert cfg.cy > 0
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # too few rows
+            "390.5 0 320.0\n0 390.5 240.0\n",
+            # too many values in a row
+            "390.5 0 320.0 7\n0 390.5 240.0\n0 0 1\n",
+            # non-numeric
+            "fx 0 320.0\n0 390.5 240.0\n0 0 1\n",
+            # off-diagonal not zero
+            "390.5 5 320.0\n0 390.5 240.0\n0 0 1\n",
+            # bottom row not [0, 0, 1]
+            "390.5 0 320.0\n0 390.5 240.0\n0 0 2\n",
+            "390.5 0 320.0\n0 390.5 240.0\n1 0 1\n",
+            # non-positive focal length
+            "0 0 320.0\n0 390.5 240.0\n0 0 1\n",
+            # empty file
+            "",
+        ],
+        ids=[
+            "too-few-rows",
+            "row-too-long",
+            "non-numeric",
+            "off-diagonal",
+            "k22-not-one",
+            "k20-not-zero",
+            "zero-fx",
+            "empty",
+        ],
+    )
+    def test_rejects_bad_matrix(self, tmp_path: Path, text: str) -> None:
+        with pytest.raises(ValueError):
+            parse_intrinsics_txt(self._write(tmp_path, text), (640, 480))
 
 
 # ---------------------------------------------------------------------------
@@ -270,6 +364,91 @@ class TestUpload:
         # 2 CogniteFile batches (1000 + 200), then 2 DroneImage batches
         assert mock_client.data_modeling.instances.apply.call_count == 4
         assert len(_image_nodes(mock_client)) == 1200
+
+
+# ---------------------------------------------------------------------------
+# CdfDroneImageService.upload — sensor config resolution (intrinsics.txt fallback)
+# ---------------------------------------------------------------------------
+
+
+def _make_tum_dataset(
+    tmp_path: Path,
+    *,
+    intrinsics: bool = False,
+    sensor_yaml: bool = False,
+    image_size: tuple[int, int] = (4, 3),
+) -> Path:
+    """Build a minimal one-frame TUM dataset with a real PNG of *image_size*."""
+    folder = tmp_path / "tum"
+    (folder / "rgb").mkdir(parents=True)
+    width, height = image_size
+    write_png(folder / "rgb" / "frame_0001.png", np.zeros((height, width, 3), dtype=np.uint8))
+    folder.joinpath("rgb.txt").write_text("# h1\n# h2\n# h3\n1000.0 rgb/frame_0001.png\n")
+    folder.joinpath("groundtruth.txt").write_text("999.0 1 2 3 0 0 0 1\n1001.0 1 2 3 0 0 0 1\n")
+    if intrinsics:
+        folder.joinpath("intrinsics.txt").write_text(SHIP_CH_INTRINSICS)
+    if sensor_yaml:
+        folder.joinpath("sensor.yaml").write_text(SENSOR_YAML.read_text())
+    return folder
+
+
+class TestSensorConfigResolution:
+    def test_explicit_yaml_wins_over_intrinsics_txt(self, tmp_path: Path) -> None:
+        folder = _make_tum_dataset(tmp_path, intrinsics=True)
+        svc, mock_client = _make_upload_client()
+        svc.upload(folder, "result-test", sensor_yaml=SENSOR_YAML)
+        props = _image_nodes(mock_client)[0].sources[0].properties
+        # width comes from the YAML (640), not the 4x3 PNG
+        assert props["imageWidth"] == 640
+
+    def test_folder_sensor_yaml_wins_over_intrinsics_txt(self, tmp_path: Path) -> None:
+        folder = _make_tum_dataset(tmp_path, intrinsics=True, sensor_yaml=True)
+        svc, mock_client = _make_upload_client()
+        svc.upload(folder, "result-test")
+        props = _image_nodes(mock_client)[0].sources[0].properties
+        assert props["imageWidth"] == 640
+
+    def test_intrinsics_txt_used_when_no_yaml(self, tmp_path: Path) -> None:
+        folder = _make_tum_dataset(tmp_path, intrinsics=True)
+        svc, mock_client = _make_upload_client()
+        count = svc.upload(folder, "result-test")
+        assert count == 1
+        props = _image_nodes(mock_client)[0].sources[0].properties
+        assert props["focalLengthX"] == pytest.approx(390.598938)
+        assert props["principalPointX"] == pytest.approx(320.0)
+        assert props["nearPlane"] == pytest.approx(0.4)
+        assert props["farPlane"] == pytest.approx(35.0)
+
+    def test_intrinsics_fallback_reads_size_from_first_png(self, tmp_path: Path) -> None:
+        folder = _make_tum_dataset(tmp_path, intrinsics=True, image_size=(8, 5))
+        svc, mock_client = _make_upload_client()
+        svc.upload(folder, "result-test")
+        props = _image_nodes(mock_client)[0].sources[0].properties
+        assert props["imageWidth"] == 8
+        assert props["imageHeight"] == 5
+
+    def test_intrinsics_fallback_uses_identity_extrinsics(self, tmp_path: Path) -> None:
+        """With identity T_BS the camera pose equals the groundtruth body pose."""
+        folder = _make_tum_dataset(tmp_path, intrinsics=True)
+        svc, mock_client = _make_upload_client()
+        svc.upload(folder, "result-test")
+        props = _image_nodes(mock_client)[0].sources[0].properties
+        assert props["positionX"] == pytest.approx(1.0)
+        assert props["positionY"] == pytest.approx(2.0)
+        assert props["positionZ"] == pytest.approx(3.0)
+
+    def test_intrinsics_fallback_logs_identity_extrinsics_warning(self, tmp_path: Path) -> None:
+        folder = _make_tum_dataset(tmp_path, intrinsics=True)
+        svc, _ = _make_upload_client()
+        with capture_logs() as logs:
+            svc.upload(folder, "result-test")
+        assert any("intrinsics.txt" in entry["event"] for entry in logs)
+
+    def test_no_yaml_and_no_intrinsics_raises(self, tmp_path: Path) -> None:
+        folder = _make_tum_dataset(tmp_path)
+        svc, _ = _make_upload_client()
+        with pytest.raises(FileNotFoundError, match=r"intrinsics\.txt"):
+            svc.upload(folder, "result-test")
 
 
 # ---------------------------------------------------------------------------
