@@ -3,6 +3,7 @@ import { renderHook, waitFor } from '@testing-library/react';
 import type { ComponentType, ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  campaignContentHint,
   useLayerPanelViewModel,
   LayerPanelViewModelContext,
 } from './useLayerPanelViewModel';
@@ -131,6 +132,48 @@ describe(useLayerPanelViewModel.name, () => {
 
     await waitFor(() => expect(result.current.campaigns).toHaveLength(1));
     expect(result.current.campaigns[0].label).toBe('Campaign 2024-09-15');
+  });
+
+  it('appends a content hint to the campaign label from its files and images', async () => {
+    vi.mocked(mockDeps.useInspectionResults).mockReturnValue(
+      makeSuccessResult([
+        createMockInspectionResult({ externalId: 'result-a', cdfFileIds: [42], pcdFileIds: [1, 2], pcdFileLabels: [] }),
+      ]) as ReturnType<LayerPanelViewModelContextType['useInspectionResults']>,
+    );
+
+    const { result } = renderHook(
+      () => useLayerPanelViewModel('autoassess', 'area-01581', false, [], new Map([['result-a', 66]])),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.campaigns).toHaveLength(1));
+    expect(result.current.campaigns[0].label).toBe('Campaign 2024-09-15 · mesh + 2 point clouds + 66 images');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Campaign content hint (pure label helper)
+  // ---------------------------------------------------------------------------
+
+  describe(campaignContentHint.name, () => {
+    it('names the mesh when the campaign has mesh files', () => {
+      expect(campaignContentHint({ cdfFileIds: [42], pcdFileIds: [] }, 0)).toBe('mesh');
+    });
+
+    it('names only the image count when the campaign has just drone images', () => {
+      expect(campaignContentHint({ cdfFileIds: [], pcdFileIds: [] }, 66)).toBe('66 images');
+    });
+
+    it('uses singular forms for one point cloud and one image', () => {
+      expect(campaignContentHint({ cdfFileIds: [], pcdFileIds: [101] }, 1)).toBe('point cloud + 1 image');
+    });
+
+    it('combines mesh and several point clouds', () => {
+      expect(campaignContentHint({ cdfFileIds: [42], pcdFileIds: [101, 102] }, 0)).toBe('mesh + 2 point clouds');
+    });
+
+    it('is empty when the campaign has no meshes, point clouds or images', () => {
+      expect(campaignContentHint({ cdfFileIds: [], pcdFileIds: [] }, 0)).toBe('');
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -510,7 +553,7 @@ describe(useLayerPanelViewModel.name, () => {
     const { result } = renderHook(
       () => useLayerPanelViewModel(
         'autoassess', 'area-01581', false, [],
-        new Set(['result-27aca577']),
+        new Map([['result-27aca577', 12]]),
       ),
       { wrapper },
     );
@@ -529,7 +572,7 @@ describe(useLayerPanelViewModel.name, () => {
     const { result } = renderHook(
       () => useLayerPanelViewModel(
         'autoassess', 'area-01581', false, [],
-        new Set(['result-27aca577']),
+        new Map([['result-27aca577', 12]]),
       ),
       { wrapper },
     );

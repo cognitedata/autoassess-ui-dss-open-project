@@ -14,6 +14,7 @@ import pytest
 from uidss.threed.bake import TextureBake, bake_vertex_colours
 from uidss.threed.convert import convert_mesh_to_cad_zip
 from uidss.threed.decimate import decimate, write_binary_ply
+from uidss.threed.legend import default_class_for_colour
 from uidss.threed.ply import PlyMesh, read_ply
 from uidss.threed.png import write_png
 
@@ -169,6 +170,71 @@ class TestConvertMeshToCadZip:
         result = convert_mesh_to_cad_zip(mesh, tmp_path / "out.zip")
 
         assert list(result.palette) == ["seg_none"]
+        assert result.legend == {}
+
+
+class TestSegmentNaming:
+    def test_without_a_classifier_segments_keep_anonymous_names(self, tmp_path: Path) -> None:
+        result = convert_mesh_to_cad_zip(_mesh(vertex_rgb=False), tmp_path / "out.zip")
+
+        assert list(result.palette) == ["seg_ff0000", "seg_0080ff"]
+        assert result.legend == {}
+
+    def test_classifier_names_matching_segments_and_reports_the_legend(
+        self, tmp_path: Path
+    ) -> None:
+        result = convert_mesh_to_cad_zip(
+            _mesh(vertex_rgb=False), tmp_path / "out.zip", classify=default_class_for_colour
+        )
+
+        assert result.palette == {"manhole": (255, 0, 0), "seg_0080ff": (0, 128, 255)}
+        assert result.legend == {"ff0000": "manhole"}
+        obj = _zip_text(result.zip_path, "model.obj")
+        assert "g manhole" in obj and "usemtl manhole" in obj
+
+    def test_named_textured_groups_are_class_c_chunk(self, tmp_path: Path) -> None:
+        mesh = _grid_mesh_with_colours(10)
+        mesh = PlyMesh(
+            positions=mesh.positions,
+            faces=mesh.faces,
+            vertex_rgb=mesh.vertex_rgb,
+            face_rgb=np.tile(np.array([[255, 0, 0]], dtype=np.uint8), (len(mesh.faces), 1)),
+        )
+
+        result = convert_mesh_to_cad_zip(
+            mesh,
+            tmp_path / "out.zip",
+            max_texture_size=64,
+            max_faces_per_chunk=60,
+            classify=default_class_for_colour,
+        )
+
+        assert all(name.startswith("manhole_c") for name in result.palette)
+        assert result.legend == {"ff0000": "manhole"}
+
+    def test_class_names_are_sanitised_for_obj_groups(self, tmp_path: Path) -> None:
+        result = convert_mesh_to_cad_zip(
+            _mesh(vertex_rgb=False), tmp_path / "out.zip", classify=lambda _rgb: "Weld Seam #2"
+        )
+
+        assert list(result.palette) == ["weld_seam_2", "weld_seam_2_0080ff"]
+        assert result.legend == {"ff0000": "Weld Seam #2", "0080ff": "Weld Seam #2"}
+
+    def test_two_colours_with_the_same_class_get_distinct_groups(self, tmp_path: Path) -> None:
+        result = convert_mesh_to_cad_zip(
+            _mesh(vertex_rgb=False), tmp_path / "out.zip", classify=lambda _rgb: "manhole"
+        )
+
+        assert list(result.palette) == ["manhole", "manhole_0080ff"]
+        assert result.legend == {"ff0000": "manhole", "0080ff": "manhole"}
+
+    def test_unsanitisable_class_names_fall_back_to_anonymous(self, tmp_path: Path) -> None:
+        result = convert_mesh_to_cad_zip(
+            _mesh(vertex_rgb=False), tmp_path / "out.zip", classify=lambda _rgb: "###"
+        )
+
+        assert list(result.palette) == ["seg_ff0000", "seg_0080ff"]
+        assert result.legend == {}
 
 
 class TestDecimate:

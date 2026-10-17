@@ -44,6 +44,7 @@ describe(CdfCampaignCadModelService.name, () => {
         collisionProxyFileId: 700,
         hasTexture: true,
         palette: { seg_ff0000_c0: [255, 0, 0] },
+        legend: {},
       },
       expect.objectContaining({ key: 'result-1/f2-cad-model', revisionId: 601, sourceFileId: 12 }),
     ]);
@@ -166,6 +167,36 @@ describe(CdfCampaignCadModelService.name, () => {
 
     expect(models[0].palette).toEqual({});
     expect(models[0].hasTexture).toBe(false);
+    expect(models[0].legend).toEqual({});
+  });
+
+  it('should parse the class-name legend from the description, normalising hex keys', async () => {
+    retrieveFiles.mockResolvedValue([fileInfo(11, 'f1')]);
+    const description = JSON.stringify({
+      palette: { manhole_c0: [255, 0, 0] },
+      hasTexture: true,
+      legend: { '#FF0000': 'manhole', '00ff00': 'structure' },
+    });
+    nodes = [modelNode('f1-cad-model', 11, 0, undefined, description), revisionNode('f1-cad-revision', 600)];
+
+    const { models } = await service.listForCampaigns([{ externalId: 'result-1', cdfFileIds: [11] }]);
+
+    expect(models[0].legend).toEqual({ ff0000: 'manhole', '00ff00': 'structure' });
+  });
+
+  it('should ignore malformed legend entries and keep old descriptions working', async () => {
+    retrieveFiles.mockResolvedValue([fileInfo(11, 'f1')]);
+    const description = JSON.stringify({
+      palette: { seg_ff0000_c0: [255, 0, 0] },
+      hasTexture: true,
+      legend: { ff0000: 42, 'not-hex': 'manhole', '00ff00': 'structure' },
+    });
+    nodes = [modelNode('f1-cad-model', 11, 0, undefined, description), revisionNode('f1-cad-revision', 600)];
+
+    const { models } = await service.listForCampaigns([{ externalId: 'result-1', cdfFileIds: [11] }]);
+
+    expect(models[0].legend).toEqual({ '00ff00': 'structure' });
+    expect(models[0].palette).toEqual({ seg_ff0000_c0: [255, 0, 0] });
   });
 
   it('should make no requests when no campaign has a mesh', async () => {

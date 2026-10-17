@@ -120,6 +120,27 @@ class TestCreateCadModelForFile:
             "hasTexture": False,
         }
 
+    def test_description_carries_the_legend_when_segments_are_named(self, tmp_path: Path) -> None:
+        client = _make_client()
+
+        _create(client, tmp_path, legend={"ff0000": "manhole"})
+
+        model = next(n for n in _applied(client) if isinstance(n, CogniteCADModelApply))
+        assert json.loads(model.description or "{}") == {
+            "palette": {"seg_ff0000": [255, 0, 0]},
+            "hasTexture": False,
+            "legend": {"ff0000": "manhole"},
+        }
+
+    def test_description_omits_the_legend_when_empty(self, tmp_path: Path) -> None:
+        # Keeps the JSON identical to what older builds wrote (backward compatible).
+        client = _make_client()
+
+        _create(client, tmp_path, legend={})
+
+        model = next(n for n in _applied(client) if isinstance(n, CogniteCADModelApply))
+        assert "legend" not in json.loads(model.description or "{}")
+
     def test_omits_the_area_tag_when_the_file_has_no_area(self, tmp_path: Path) -> None:
         client = _make_client()
         source = MeshFile(file_id=42, external_id="f", name="mesh.ply")
@@ -331,7 +352,12 @@ class TestRefreshStatus:
 # ---------------------------------------------------------------------------
 
 
-def _create(client: Any, tmp_path: Path, source: MeshFile = _SOURCE) -> CadModel:
+def _create(
+    client: Any,
+    tmp_path: Path,
+    source: MeshFile = _SOURCE,
+    legend: dict[str, str] | None = None,
+) -> CadModel:
     zip_path = tmp_path / "model.zip"
     zip_path.write_bytes(b"zip")
     proxy_path = tmp_path / "proxy.ply"
@@ -342,6 +368,7 @@ def _create(client: Any, tmp_path: Path, source: MeshFile = _SOURCE) -> CadModel
         proxy_path=proxy_path,
         palette={"seg_ff0000": (255, 0, 0)},
         has_texture=False,
+        legend=legend,
     )
 
 

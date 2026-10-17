@@ -1255,6 +1255,7 @@ function makeCadModel(campaignExternalId: string, file = 'f1'): CampaignCadModel
     collisionProxyFileId: 3,
     hasTexture: false,
     palette: {},
+    legend: {},
   };
 }
 
