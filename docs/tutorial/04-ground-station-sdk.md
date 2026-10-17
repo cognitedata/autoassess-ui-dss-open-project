@@ -86,7 +86,7 @@ The folder is scanned **recursively**, and files are recognised by extension or 
 |---|---|---|
 | `*.ply` | Mesh file on the campaign (`cdfFileIds`) | Binary or ASCII PLY. Mesh or point cloud, optional vertex/face colours |
 | `*.pcd` | Point cloud on the campaign (`pcdFileIds` + label you type) | PCL PCD. A `label` field is used to colour points in the viewer |
-| `*.csv` | `NdtMeasurement` nodes | Columns `timestamp,thickness,x,y,z`. **timestamp in ns**, **thickness in metres** (stored ×1000 as mm) |
+| `*.csv` | `NdtMeasurement` nodes | Columns `timestamp,thickness,x,y,z`. **timestamp in epoch seconds**, **thickness in mm** (the D6.2 contract; legacy ns and metres are auto-detected) |
 | `ssg.yaml` | `StructuralElement` nodes on the **area** | See below |
 | `metrics.yaml` | `CampaignMetric` nodes | See below |
 
